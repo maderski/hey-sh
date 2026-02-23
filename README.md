@@ -9,11 +9,35 @@ A shell-native natural language CLI assistant. Ask for a shell command in plain 
 
 ## Installation
 
+### macOS + zsh (recommended)
+
+Add `~/.local/bin` to your PATH if it isn't already:
+
+```zsh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Add that line to your `~/.zshrc`, then reload it:
+
+```bash
+source ~/.zshrc
+```
+
+Then install `hey` as a global tool from the project directory:
+
+```bash
+uv tool install .
+```
+
+After that you can run `hey "..."` from anywhere.
+
+### Editable install (development)
+
 ```bash
 pip install -e .
 ```
 
-Or with [uv](https://github.com/astral-sh/uv):
+Or just sync dependencies without installing:
 
 ```bash
 uv sync
