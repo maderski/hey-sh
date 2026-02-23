@@ -6,7 +6,7 @@ from hey.clipboard import copy_to_clipboard
 from hey.config import load_config, resolve_endpoint
 from hey.history import print_history, save_history
 from hey.llm import ping_llm, query_llm
-from hey.shell import detect_shell, run_command
+from hey.shell import detect_platform, detect_shell, run_command
 
 
 def extract_command(response: str) -> str:
@@ -129,12 +129,14 @@ def main() -> None:
         sys.exit(1)
 
     shell = detect_shell()
+    os_platform = detect_platform()
 
     try:
         response = query_llm(
             prompt=full_query,
             explain=args.explain,
             shell=shell,
+            platform=os_platform,
             endpoint=args.endpoint,
             model=args.model,
         )
@@ -164,9 +166,10 @@ def main() -> None:
             return
         try:
             install_response = query_llm(
-                prompt=f"How do I install '{cmd_name}' on {shell}?",
+                prompt=f"How do I install '{cmd_name}'?",
                 explain=True,
                 shell=shell,
+                platform=os_platform,
                 endpoint=args.endpoint,
                 model=args.model,
             )

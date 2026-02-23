@@ -19,11 +19,12 @@ def query_llm(
     prompt: str,
     explain: bool,
     shell: str,
+    platform: str,
     endpoint: str,
     model: str,
 ) -> str:
     base = EXPLAIN_SYSTEM_PROMPT if explain else SYSTEM_PROMPT
-    system = f"{base} The user's shell is {shell}."
+    system = f"{base} The user's shell is {shell}. The user's OS is {platform}."
 
     payload = {
         "model": model,
