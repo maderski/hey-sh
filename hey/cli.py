@@ -1,4 +1,5 @@
 import argparse
+import shutil
 import sys
 
 from hey.clipboard import copy_to_clipboard
@@ -14,9 +15,12 @@ def extract_command(response: str) -> str:
         line = line.strip()
         if not line:
             continue
-        # Strip code fence markers
+        # Skip triple code fence markers
         if line.startswith("```"):
             continue
+        # Strip surrounding single backticks (inline code)
+        if line.startswith("`") and line.endswith("`") and len(line) > 2:
+            line = line[1:-1]
         return line
     return lines[0].strip() if lines else response.strip()
 
@@ -150,9 +154,48 @@ def main() -> None:
         else:
             print("Could not copy to clipboard.", file=sys.stderr)
 
+    def offer_install(cmd_name: str) -> None:
+        try:
+            answer = input(f"\n'{cmd_name}' not found. Ask LLM how to install it? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if answer not in ("y", "yes"):
+            return
+        try:
+            install_response = query_llm(
+                prompt=f"How do I install '{cmd_name}' on {shell}?",
+                explain=True,
+                shell=shell,
+                endpoint=args.endpoint,
+                model=args.model,
+            )
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return
+        print(f"\n{install_response}")
+        install_cmd = extract_command(install_response)
+        try:
+            run_answer = input("\nRun install command? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if run_answer in ("y", "yes"):
+            run_command(install_cmd, shell)
+
+    def run_and_handle(cmd: str) -> None:
+        cmd_name = cmd.split()[0]
+        if shutil.which(cmd_name) is None:
+            if sys.stdout.isatty():
+                offer_install(cmd_name)
+            return
+        exit_code = run_command(cmd, shell)
+        if exit_code == 127 and sys.stdout.isatty():
+            offer_install(cmd_name)
+
     # Run logic
     if args.run_now:
-        run_command(command, shell)
+        run_and_handle(command)
     elif args.no_run:
         pass
     elif sys.stdout.isatty() and not stdin_piped:
@@ -162,4 +205,4 @@ def main() -> None:
             print()
             sys.exit(0)
         if answer in ("y", "yes"):
-            run_command(command, shell)
+            run_and_handle(command)
