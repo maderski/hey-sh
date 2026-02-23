@@ -4,7 +4,7 @@ import sys
 from hey.clipboard import copy_to_clipboard
 from hey.config import load_config, resolve_endpoint
 from hey.history import print_history, save_history
-from hey.llm import query_llm
+from hey.llm import ping_llm, query_llm
 from hey.shell import detect_shell, run_command
 
 
@@ -80,8 +80,23 @@ def main() -> None:
         metavar="NAME",
         help=f"Model name sent in payload (default: {default_model})",
     )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Test the connection to the LLM endpoint and exit",
+    )
 
     args = parser.parse_args()
+
+    if args.test:
+        print(f"Endpoint: {args.endpoint}")
+        result = ping_llm(args.endpoint, args.model)
+        if result["ok"]:
+            print(f"OK  {result['elapsed_ms']}ms  model={result['model']}")
+            sys.exit(0)
+        else:
+            print(f"FAIL  {result['error']}", file=sys.stderr)
+            sys.exit(1)
 
     if args.history:
         print_history(args.history_n)

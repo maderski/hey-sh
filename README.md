@@ -45,6 +45,7 @@ hey "list all open ports"
 | `--history-n N` | | Number of history entries to show (default: 20) |
 | `--endpoint URL` | | LLM endpoint URL (default: `http://localhost:8080/v1/chat/completions`) |
 | `--model NAME` | | Model name sent in the request payload (default: `local`) |
+| `--test` | | Test the connection to the LLM endpoint and exit |
 
 ### Examples
 
@@ -103,6 +104,20 @@ Create `~/.config/hey/config.json` to set persistent defaults.
 | `model` | Model name sent in the request | `"llama3"` |
 
 CLI flags (`--endpoint`, `--model`) always override config file values.
+
+### Testing your connection
+
+```bash
+hey --test
+# Endpoint: http://llama.cpp/v1/chat/completions
+# OK  312ms  model=llama-3.2-3b
+
+# On failure:
+# Endpoint: http://llama.cpp/v1/chat/completions
+# FAIL  Could not connect to http://llama.cpp/v1/chat/completions
+```
+
+`--test` respects your config file and any `--endpoint` / `--model` flags passed alongside it.
 
 ## Run prompt behavior
 
