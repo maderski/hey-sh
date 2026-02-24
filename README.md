@@ -23,6 +23,11 @@ Add that line to your `~/.zshrc`, then reload it:
 source ~/.zshrc
 ```
 
+Requires uv to be installed on Mac
+```bash
+brew install uv
+```
+
 Then install `hey` as a global tool from the project directory:
 
 ```bash
