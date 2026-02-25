@@ -23,9 +23,38 @@ Add that line to your `~/.zshrc`, then reload it:
 source ~/.zshrc
 ```
 
-Requires uv to be installed on Mac
+Install `uv`:
+
 ```bash
 brew install uv
+```
+
+Then install `hey` as a global tool from the project directory:
+
+```bash
+uv tool install .
+```
+
+After that you can run `hey "..."` from anywhere.
+
+### Linux
+
+Add `~/.local/bin` to your PATH if it isn't already:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Add that line to your `~/.bashrc` (or `~/.zshrc` if using zsh), then reload it:
+
+```bash
+source ~/.bashrc
+```
+
+Install `uv`:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 Then install `hey` as a global tool from the project directory:
