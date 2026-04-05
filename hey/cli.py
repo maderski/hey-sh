@@ -1,12 +1,17 @@
 import argparse
+import re
 import shutil
 import sys
+from typing import Optional
 
 from hey.clipboard import copy_to_clipboard
 from hey.config import load_config, resolve_endpoint
 from hey.history import print_history, save_history
 from hey.llm import ping_llm, query_llm
 from hey.shell import detect_platform, detect_shell, run_command
+
+
+NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+(.+?)\s*$")
 
 
 def extract_command(response: str) -> str:
@@ -23,6 +28,62 @@ def extract_command(response: str) -> str:
             line = line[1:-1]
         return line
     return lines[0].strip() if lines else response.strip()
+
+
+def parse_response_options(response: str) -> list[dict[str, str]]:
+    lines = response.splitlines()
+    options: list[dict[str, str]] = []
+    current: Optional[dict[str, str]] = None
+    current_body: list[str] = []
+
+    for raw_line in lines:
+        match = NUMBERED_OPTION_RE.match(raw_line)
+        if match:
+            if current is not None:
+                current["body"] = "\n".join(current_body).strip()
+                options.append(current)
+            current = {
+                "number": match.group(1),
+                "command": extract_command(match.group(2)),
+            }
+            current_body = [raw_line.rstrip()]
+            continue
+        if current is not None:
+            current_body.append(raw_line.rstrip())
+
+    if current is not None:
+        current["body"] = "\n".join(current_body).strip()
+        options.append(current)
+
+    if len(options) < 2:
+        return []
+
+    expected = [str(index) for index in range(1, len(options) + 1)]
+    actual = [option["number"] for option in options]
+    if actual != expected:
+        return []
+
+    return options
+
+
+def select_option(options: list[dict[str, str]]) -> Optional[dict[str, str]]:
+    prompt = f"\nChoose an option [1-{len(options)}] or press Enter to cancel: "
+    attempts = 0
+    while attempts < 3:
+        try:
+            answer = input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+        if not answer:
+            return None
+        if answer.isdigit():
+            choice = int(answer)
+            if 1 <= choice <= len(options):
+                return options[choice - 1]
+        print("Please enter a valid option number.")
+        attempts += 1
+    return None
 
 
 def main() -> None:
@@ -144,9 +205,28 @@ def main() -> None:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    options = parse_response_options(response)
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+
     print(response)
 
-    command = extract_command(response)
+    if options:
+        if not interactive:
+            print(
+                "Multiple command options need an interactive terminal. "
+                "Rerun `hey` interactively or make the request more specific.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        selected = select_option(options)
+        if selected is None:
+            print("No option selected.")
+            sys.exit(0)
+        command = selected["command"]
+        print(f"\nSelected: {command}")
+    else:
+        command = extract_command(response)
+
     save_history(full_query, command, shell)
 
     if args.copy:
@@ -201,7 +281,7 @@ def main() -> None:
         run_and_handle(command)
     elif args.no_run:
         pass
-    elif sys.stdout.isatty() and not stdin_piped:
+    elif interactive and not stdin_piped:
         try:
             answer = input("\nRun it? [y/N] ").strip().lower()
         except (EOFError, KeyboardInterrupt):
