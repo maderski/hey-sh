@@ -40,6 +40,14 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertTrue(cli._looks_like_command("docker ps"))
         self.assertTrue(cli._looks_like_command("grep pattern file"))
 
+    def test_tool_names_ending_in_s_accepted(self) -> None:
+        # Tool names that end in 's' must not be rejected; only known prose
+        # verbs are blocked.
+        self.assertTrue(cli._looks_like_command("rails server"))
+        self.assertTrue(cli._looks_like_command("nexus upload"))
+        self.assertTrue(cli._looks_like_command("travis encrypt"))
+        self.assertTrue(cli._looks_like_command("terminus deploy"))
+
     def test_prose_rejected(self) -> None:
         self.assertFalse(cli._looks_like_command("shows hidden files"))
         self.assertFalse(cli._looks_like_command("lists all files in directory"))

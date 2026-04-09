@@ -19,6 +19,23 @@ from hey.shell import detect_platform, detect_shell, run_command
 NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+([a-z0-9/.$~!{].*?)\s*$")
 
 
+# Third-person-singular verb forms that LLMs commonly use in explanation text.
+# None of these are plausible command names, so matching the first word of a
+# numbered line against this set is a precise way to reject prose without
+# producing false positives for real tool names that happen to end in 's'
+# (e.g. "rails", "nexus", "travis", "terminus").
+_PROSE_VERBS = frozenset({
+    "adds", "allows", "checks", "closes", "connects", "copies", "creates",
+    "deletes", "disables", "disconnects", "displays", "enables", "excludes",
+    "executes", "filters", "finds", "generates", "gives", "includes",
+    "installs", "lists", "loads", "makes", "moves", "opens", "outputs",
+    "parses", "prevents", "prints", "provides", "reads", "receives",
+    "removes", "renames", "requires", "returns", "runs", "saves", "searches",
+    "sends", "sets", "shows", "sorts", "starts", "stops", "takes",
+    "uninstalls", "updates", "writes",
+})
+
+
 def _looks_like_command(text: str) -> bool:
     """Return True if text resembles a shell command rather than prose.
 
@@ -30,13 +47,9 @@ def _looks_like_command(text: str) -> bool:
        glob (*), a quoted string, or a dotted filename (file.txt, script.sh).
        Accepts "ls -la", "find . -name '*.txt'", "python3 script.py".
 
-    2. Subcommand path: no shell token is present but the first word does NOT
-       look like a conjugated prose verb.  Third-person-singular verb forms
-       (e.g. "shows", "lists", "searches", "displays") end in 's' and are
-       longer than three characters — those are rejected as prose.  Short
-       command names and typical tool names ("git", "kubectl", "npm", "grep")
-       don't match that pattern, so "git status" and "kubectl get pods" are
-       accepted.
+    2. Subcommand path: no shell token is present but the first word is not a
+       known prose verb.  Accepts "git status", "kubectl get pods", "rails
+       server" while rejecting "shows hidden files", "lists all files".
     """
     words = text.split()
     if len(words) == 1:
@@ -48,10 +61,7 @@ def _looks_like_command(text: str) -> bool:
         for w in words[1:]
     ):
         return True
-    # Subcommand-style: reject if the first word looks like a prose verb
-    # (ends in 's', longer than three characters — "shows", "lists", etc.).
-    first = words[0]
-    return not (len(first) > 3 and first.endswith("s"))
+    return words[0] not in _PROSE_VERBS
 
 
 def extract_command(response: str) -> str:
