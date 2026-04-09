@@ -18,6 +18,28 @@ class FakeStream(io.StringIO):
         return self._is_tty
 
 
+class TestLooksLikeCommand(unittest.TestCase):
+    def test_single_word_accepted(self) -> None:
+        self.assertTrue(cli._looks_like_command("pwd"))
+        self.assertTrue(cli._looks_like_command("ls"))
+
+    def test_command_with_flag_accepted(self) -> None:
+        self.assertTrue(cli._looks_like_command("ls -la"))
+        self.assertTrue(cli._looks_like_command("grep -r pattern ."))
+        self.assertTrue(cli._looks_like_command("uname -a"))
+
+    def test_command_with_path_arg_accepted(self) -> None:
+        self.assertTrue(cli._looks_like_command("cat /etc/passwd"))
+        self.assertTrue(cli._looks_like_command("python3 script.py"))
+        self.assertTrue(cli._looks_like_command("node app.js"))
+
+    def test_prose_rejected(self) -> None:
+        self.assertFalse(cli._looks_like_command("shows hidden files"))
+        self.assertFalse(cli._looks_like_command("lists all files in directory"))
+        self.assertFalse(cli._looks_like_command("searches recursively"))
+        self.assertFalse(cli._looks_like_command("displays file permissions"))
+
+
 class TestCliParsing(unittest.TestCase):
     def test_parse_response_options_with_explanations(self) -> None:
         response = (
@@ -84,6 +106,24 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(len(options), 2)
         self.assertEqual(options[0]["command"], "ls -la")
         self.assertIn("2. Shows hidden files", options[0]["body"])
+        self.assertEqual(options[1]["command"], "find . -name '*.txt'")
+
+    def test_parse_response_options_lowercase_prose_not_treated_as_option(self) -> None:
+        # Lowercase prose explanation lines ("2. shows hidden files") must be
+        # absorbed into option 1's body so the real "2. find ..." line becomes
+        # option 2. Without the _looks_like_command guard, choosing option 2
+        # would run "shows hidden files" instead of the actual command.
+        response = (
+            "1. ls -la\n"
+            "2. shows hidden files\n"
+            "2. find . -name '*.txt'\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "ls -la")
+        self.assertIn("2. shows hidden files", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
 
     def test_parse_response_options_hyphen_flag_line_not_treated_as_option(self) -> None:

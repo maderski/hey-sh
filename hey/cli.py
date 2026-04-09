@@ -19,6 +19,27 @@ from hey.shell import detect_platform, detect_shell, run_command
 NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+([a-z0-9/.$~!{].*?)\s*$")
 
 
+def _looks_like_command(text: str) -> bool:
+    """Return True if text resembles a shell command rather than prose.
+
+    A single bare word is always accepted (e.g. "pwd").  For multi-word text,
+    at least one argument (word after the first) must contain a shell-typical
+    token: a flag (-x/--flag), a path (/dir, ./rel, ~/home), a sigil ($VAR),
+    a glob (*), a quoted string, or a dotted filename (file.txt, script.sh).
+    This accepts "ls -la" and "python3 script.py" while rejecting lowercase
+    prose like "shows hidden files" or "searches recursively".
+    """
+    words = text.split()
+    if len(words) == 1:
+        return True
+    return any(
+        w[0] in "-/.$~*\"'"
+        or "/" in w
+        or (len(w) > 1 and "." in w[1:])
+        for w in words[1:]
+    )
+
+
 def extract_command(response: str) -> str:
     lines = response.splitlines()
     for line in lines:
@@ -43,7 +64,7 @@ def parse_response_options(response: str) -> list[dict[str, str]]:
     # explanation lines) from being misclassified as ambiguous options.
     first_content = next((l for l in lines if l.strip()), "")
     first_match = NUMBERED_OPTION_RE.match(first_content)
-    if not first_match or first_match.group(1) != "1":
+    if not first_match or first_match.group(1) != "1" or not _looks_like_command(first_match.group(2)):
         return []
 
     options: list[dict[str, str]] = []
@@ -56,7 +77,7 @@ def parse_response_options(response: str) -> list[dict[str, str]]:
         # Treat as a new option header only if the number is the next expected one.
         # Explanation lines that happen to start with a number (e.g. "1. -l flag")
         # are absorbed into the current option's body instead.
-        if match and int(match.group(1)) == next_expected:
+        if match and int(match.group(1)) == next_expected and _looks_like_command(match.group(2)):
             if current is not None:
                 current["body"] = "\n".join(current_body).strip()
                 options.append(current)
