@@ -45,10 +45,17 @@ class TestCliParsing(unittest.TestCase):
             ],
         )
 
-    def test_parse_response_options_rejects_non_sequential_numbering(self) -> None:
+    def test_parse_response_options_single_option_returned_for_malformed_list(self) -> None:
+        # A partially malformed list (1 followed by 3, skipping 2) yields one
+        # parseable option. That option is returned so main() uses the parsed
+        # command rather than falling back to extract_command() which would
+        # return the literal "1. pwd" string.
         response = "1. pwd\n3. uname -a\n"
 
-        self.assertEqual(cli.parse_response_options(response), [])
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 1)
+        self.assertEqual(options[0]["command"], "pwd")
 
     def test_parse_response_options_ignores_numbered_explanation_lines(self) -> None:
         # --explain response: plain command first, then numbered explanation lines.
@@ -132,6 +139,28 @@ class TestCliMain(unittest.TestCase):
         self.assertIn("1. cat /etc/arch-release", stdout.getvalue())
         self.assertIn("Multiple command options need an interactive terminal", stderr.getvalue())
         save_history.assert_not_called()
+
+    def test_main_uses_parsed_command_for_single_option_response(self) -> None:
+        # When the model returns only one parseable numbered option, main() must
+        # save/copy/run the extracted command ("ls -la"), not the literal line
+        # text ("1. ls -la") that extract_command() would have returned.
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream(is_tty=False)
+
+        with patch("sys.argv", ["hey", "--no-run", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("hey.cli.detect_shell", return_value="zsh"), patch(
+            "hey.cli.detect_platform", return_value="macOS"
+        ), patch(
+            "hey.cli.query_llm", return_value="1. ls -la\nLists all files."
+        ), patch(
+            "hey.cli.save_history"
+        ) as save_history:
+            cli.main()
+
+        save_history.assert_called_once_with("list files", "ls -la", "zsh")
+        self.assertEqual(stderr.getvalue(), "")
 
     def test_main_saves_selected_command(self) -> None:
         stdout = FakeStream(is_tty=True)

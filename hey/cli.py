@@ -74,7 +74,7 @@ def parse_response_options(response: str) -> list[dict[str, str]]:
         current["body"] = "\n".join(current_body).strip()
         options.append(current)
 
-    if len(options) < 2:
+    if not options:
         return []
 
     return options
@@ -224,7 +224,9 @@ def main() -> None:
 
     print(response)
 
-    if options:
+    if len(options) == 1:
+        command = options[0]["command"]
+    elif len(options) > 1:
         if not interactive:
             print(
                 "Multiple command options need an interactive terminal. "
