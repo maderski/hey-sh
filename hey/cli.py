@@ -11,13 +11,13 @@ from hey.llm import ping_llm, query_llm
 from hey.shell import detect_platform, detect_shell, run_command
 
 
-# Command portion must start with a letter, digit, or a path/sigil character
-# (/  .  $  ~  !  {).  Uppercase is included for PowerShell-style cmdlets
-# (e.g. Get-Process, Set-Location).  Hyphens are still excluded so flag
-# descriptions ("-l shows long format") are never promoted to option headers.
-# Prose verbs like "Shows all files" are filtered by _looks_like_command via
-# the _PROSE_VERBS blocklist (case-insensitive), not by this regex.
-NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+([a-zA-Z0-9/.$~!{].*?)\s*$")
+# Match any non-whitespace character as the start of the command portion so
+# that valid shell starters beyond letters/digits are recognised — e.g. the
+# test operator ([ -f file ]), subshells ((cd /tmp && ls)), the null command
+# (: >file), and PowerShell cmdlets (Get-Process).  Content filtering
+# (prose verbs, hyphen-initial flag descriptions) is handled entirely by
+# _looks_like_command rather than by this regex.
+NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+(\S.*?)\s*$")
 
 
 # Third-person-singular verb forms that LLMs commonly use in explanation text.
@@ -55,6 +55,10 @@ def _looks_like_command(text: str) -> bool:
     words = text.split()
     if len(words) == 1:
         return True
+    # Multi-word text whose first token is a flag (e.g. "-l shows long format")
+    # is a flag description, not a command invocation.
+    if words[0].startswith("-"):
+        return False
     if any(
         w[0] in "-/.$~*\"'"
         or "/" in w

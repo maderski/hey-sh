@@ -66,6 +66,18 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertFalse(cli._looks_like_command("Shows hidden files"))
         self.assertFalse(cli._looks_like_command("Lists all files in directory"))
 
+    def test_special_shell_starters_accepted(self) -> None:
+        # Commands that start with non-alphanumeric shell tokens must be accepted.
+        self.assertTrue(cli._looks_like_command("[ -f file ]"))
+        self.assertTrue(cli._looks_like_command("(cd /tmp && ls)"))
+        self.assertTrue(cli._looks_like_command(": >file"))
+
+    def test_hyphen_initial_multi_word_rejected(self) -> None:
+        # Multi-word text starting with a hyphen is a flag description, not a
+        # command invocation, and must be rejected regardless of what follows.
+        self.assertFalse(cli._looks_like_command("-l shows long listing format"))
+        self.assertFalse(cli._looks_like_command("-v verbose output"))
+
 
 class TestCliParsing(unittest.TestCase):
     def test_parse_response_options_with_explanations(self) -> None:
@@ -93,6 +105,23 @@ class TestCliParsing(unittest.TestCase):
                 },
             ],
         )
+
+    def test_parse_response_options_special_shell_starters_parsed(self) -> None:
+        # Option headers that begin with non-alphanumeric shell tokens must be
+        # parsed as selectable options so main() never falls back to
+        # extract_command() and produces a literal "1. [ -f file ]" string.
+        response = (
+            "1. [ -f file ] && cat file\n"
+            "Test and print if file exists.\n"
+            "2. (cd /tmp && ls)\n"
+            "List /tmp contents in a subshell.\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "[ -f file ] && cat file")
+        self.assertEqual(options[1]["command"], "(cd /tmp && ls)")
 
     def test_parse_response_options_uppercase_commands_parsed(self) -> None:
         # Uppercase-initial option headers (e.g. PowerShell cmdlets) must be
