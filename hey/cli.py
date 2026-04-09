@@ -11,7 +11,12 @@ from hey.llm import ping_llm, query_llm
 from hey.shell import detect_platform, detect_shell, run_command
 
 
-NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+(.+?)\s*$")
+# Command portion must start with a shell-command-like character: lowercase
+# letter, digit, or a path/sigil character (/  .  $  ~  !  {).
+# This rejects uppercase-initial prose ("Shows all files") and hyphen-initial
+# flag descriptions ("-l shows long format") so they are never mistaken for
+# option headers and never end up as selected["command"].
+NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+([a-z0-9/.$~!{].*?)\s*$")
 
 
 def extract_command(response: str) -> str:

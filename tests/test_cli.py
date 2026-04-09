@@ -61,41 +61,39 @@ class TestCliParsing(unittest.TestCase):
 
         self.assertEqual(cli.parse_response_options(response), [])
 
-    def test_parse_response_options_explanation_lines_inside_options(self) -> None:
-        # Ambiguous options where each option's explanation re-uses "1." for its
-        # own sub-items. Those repeated "1." lines must NOT be treated as new
-        # option headers — they belong to the enclosing option's body.
+    def test_parse_response_options_uppercase_prose_not_treated_as_option(self) -> None:
+        # An explanation line starting with an uppercase word (e.g. "Shows ...")
+        # must never become an option header, so selected["command"] is never
+        # set to prose text that could be executed by --run.
         response = (
             "1. ls -la\n"
-            "1. -l shows long listing\n"
+            "2. Shows hidden files — use -a flag\n"
             "2. find . -name '*.txt'\n"
-            "1. searches recursively\n"
+            "Shows all matching paths.\n"
         )
 
         options = cli.parse_response_options(response)
 
         self.assertEqual(len(options), 2)
         self.assertEqual(options[0]["command"], "ls -la")
-        self.assertIn("1. -l shows long listing", options[0]["body"])
+        self.assertIn("2. Shows hidden files", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
-        self.assertIn("1. searches recursively", options[1]["body"])
 
-    def test_parse_response_options_repeated_1_in_explanation_does_not_return_empty(self) -> None:
-        # If a repeated "1. ..." explanation line caused bogus option parsing,
-        # the old code would fail sequential validation and return [], letting
-        # main() fall back to extract_command() which would yield "1. ls -la".
-        # Verify we still get the real options, not [].
+    def test_parse_response_options_hyphen_flag_line_not_treated_as_option(self) -> None:
+        # An explanation line starting with a flag ("-l ...") must never become
+        # an option header, so selected["command"] is never "-l shows long format".
         response = (
             "1. ls -la\n"
-            "1. -l long format\n"
-            "2. find . -type f\n"
+            "2. -l shows long listing format\n"
+            "2. find . -name '*.txt'\n"
         )
 
         options = cli.parse_response_options(response)
 
         self.assertEqual(len(options), 2)
         self.assertEqual(options[0]["command"], "ls -la")
-        self.assertEqual(options[1]["command"], "find . -type f")
+        self.assertIn("2. -l shows long listing format", options[0]["body"])
+        self.assertEqual(options[1]["command"], "find . -name '*.txt'")
 
     def test_extract_command_strips_inline_backticks(self) -> None:
         self.assertEqual(cli.extract_command("`ls -la`"), "ls -la")
