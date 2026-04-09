@@ -44,10 +44,14 @@ def parse_response_options(response: str) -> list[dict[str, str]]:
     options: list[dict[str, str]] = []
     current: Optional[dict[str, str]] = None
     current_body: list[str] = []
+    next_expected = 1  # only accept strictly sequential option numbers
 
     for raw_line in lines:
         match = NUMBERED_OPTION_RE.match(raw_line)
-        if match:
+        # Treat as a new option header only if the number is the next expected one.
+        # Explanation lines that happen to start with a number (e.g. "1. -l flag")
+        # are absorbed into the current option's body instead.
+        if match and int(match.group(1)) == next_expected:
             if current is not None:
                 current["body"] = "\n".join(current_body).strip()
                 options.append(current)
@@ -56,6 +60,7 @@ def parse_response_options(response: str) -> list[dict[str, str]]:
                 "command": extract_command(match.group(2)),
             }
             current_body = [raw_line.rstrip()]
+            next_expected += 1
             continue
         if current is not None:
             current_body.append(raw_line.rstrip())
@@ -65,11 +70,6 @@ def parse_response_options(response: str) -> list[dict[str, str]]:
         options.append(current)
 
     if len(options) < 2:
-        return []
-
-    expected = [str(index) for index in range(1, len(options) + 1)]
-    actual = [option["number"] for option in options]
-    if actual != expected:
         return []
 
     return options
