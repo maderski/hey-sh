@@ -11,12 +11,13 @@ from hey.llm import ping_llm, query_llm
 from hey.shell import detect_platform, detect_shell, run_command
 
 
-# Command portion must start with a shell-command-like character: lowercase
-# letter, digit, or a path/sigil character (/  .  $  ~  !  {).
-# This rejects uppercase-initial prose ("Shows all files") and hyphen-initial
-# flag descriptions ("-l shows long format") so they are never mistaken for
-# option headers and never end up as selected["command"].
-NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+([a-z0-9/.$~!{].*?)\s*$")
+# Command portion must start with a letter, digit, or a path/sigil character
+# (/  .  $  ~  !  {).  Uppercase is included for PowerShell-style cmdlets
+# (e.g. Get-Process, Set-Location).  Hyphens are still excluded so flag
+# descriptions ("-l shows long format") are never promoted to option headers.
+# Prose verbs like "Shows all files" are filtered by _looks_like_command via
+# the _PROSE_VERBS blocklist (case-insensitive), not by this regex.
+NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+([a-zA-Z0-9/.$~!{].*?)\s*$")
 
 
 # Third-person-singular verb forms that LLMs commonly use in explanation text.
@@ -61,7 +62,7 @@ def _looks_like_command(text: str) -> bool:
         for w in words[1:]
     ):
         return True
-    return words[0] not in _PROSE_VERBS
+    return words[0].lower() not in _PROSE_VERBS
 
 
 def extract_command(response: str) -> str:

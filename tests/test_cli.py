@@ -48,11 +48,23 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertTrue(cli._looks_like_command("travis encrypt"))
         self.assertTrue(cli._looks_like_command("terminus deploy"))
 
+    def test_uppercase_commands_accepted(self) -> None:
+        # PowerShell-style and other mixed-case commands must be accepted.
+        self.assertTrue(cli._looks_like_command("Get-Process"))
+        self.assertTrue(cli._looks_like_command("Set-Location C:\\Users"))
+        self.assertTrue(cli._looks_like_command("Get-Process -Name python"))
+
     def test_prose_rejected(self) -> None:
         self.assertFalse(cli._looks_like_command("shows hidden files"))
         self.assertFalse(cli._looks_like_command("lists all files in directory"))
         self.assertFalse(cli._looks_like_command("searches recursively"))
         self.assertFalse(cli._looks_like_command("displays file permissions"))
+
+    def test_uppercase_prose_rejected(self) -> None:
+        # Uppercase-initial prose verbs must still be rejected via the
+        # case-insensitive _PROSE_VERBS lookup.
+        self.assertFalse(cli._looks_like_command("Shows hidden files"))
+        self.assertFalse(cli._looks_like_command("Lists all files in directory"))
 
 
 class TestCliParsing(unittest.TestCase):
@@ -82,6 +94,23 @@ class TestCliParsing(unittest.TestCase):
             ],
         )
 
+    def test_parse_response_options_uppercase_commands_parsed(self) -> None:
+        # Uppercase-initial option headers (e.g. PowerShell cmdlets) must be
+        # parsed as selectable options, not dropped, so main() never falls back
+        # to extract_command() and runs "1. Get-Process" as literal text.
+        response = (
+            "1. Get-Process\n"
+            "Lists running processes.\n"
+            "2. Get-Process -Name python\n"
+            "Filters by name.\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "Get-Process")
+        self.assertEqual(options[1]["command"], "Get-Process -Name python")
+
     def test_parse_response_options_single_option_returned_for_malformed_list(self) -> None:
         # A partially malformed list (1 followed by 3, skipping 2) yields one
         # parseable option. That option is returned so main() uses the parsed
@@ -106,12 +135,12 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(cli.parse_response_options(response), [])
 
     def test_parse_response_options_uppercase_prose_not_treated_as_option(self) -> None:
-        # An explanation line starting with an uppercase word (e.g. "Shows ...")
-        # must never become an option header, so selected["command"] is never
-        # set to prose text that could be executed by --run.
+        # An explanation line starting with an uppercase prose verb (e.g. "Lists
+        # all files") must never become an option header — _looks_like_command
+        # rejects it via the case-insensitive _PROSE_VERBS lookup.
         response = (
             "1. ls -la\n"
-            "2. Shows hidden files — use -a flag\n"
+            "2. Lists all files including hidden ones\n"
             "2. find . -name '*.txt'\n"
             "Shows all matching paths.\n"
         )
@@ -120,7 +149,7 @@ class TestCliParsing(unittest.TestCase):
 
         self.assertEqual(len(options), 2)
         self.assertEqual(options[0]["command"], "ls -la")
-        self.assertIn("2. Shows hidden files", options[0]["body"])
+        self.assertIn("2. Lists all files", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
 
     def test_parse_response_options_lowercase_prose_not_treated_as_option(self) -> None:
