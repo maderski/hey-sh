@@ -32,6 +32,15 @@ def extract_command(response: str) -> str:
 
 def parse_response_options(response: str) -> list[dict[str, str]]:
     lines = response.splitlines()
+
+    # Only treat as numbered options if the first non-empty line is "1. <command>".
+    # This prevents --explain responses (plain command followed by numbered
+    # explanation lines) from being misclassified as ambiguous options.
+    first_content = next((l for l in lines if l.strip()), "")
+    first_match = NUMBERED_OPTION_RE.match(first_content)
+    if not first_match or first_match.group(1) != "1":
+        return []
+
     options: list[dict[str, str]] = []
     current: Optional[dict[str, str]] = None
     current_body: list[str] = []

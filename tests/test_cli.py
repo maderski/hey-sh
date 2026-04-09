@@ -50,6 +50,17 @@ class TestCliParsing(unittest.TestCase):
 
         self.assertEqual(cli.parse_response_options(response), [])
 
+    def test_parse_response_options_ignores_numbered_explanation_lines(self) -> None:
+        # --explain response: plain command first, then numbered explanation lines.
+        # Should NOT be treated as ambiguous options.
+        response = (
+            "ls -la\n"
+            "1. Lists all files including hidden ones\n"
+            "2. Shows detailed information (permissions, size, date)\n"
+        )
+
+        self.assertEqual(cli.parse_response_options(response), [])
+
     def test_extract_command_strips_inline_backticks(self) -> None:
         self.assertEqual(cli.extract_command("`ls -la`"), "ls -la")
 
