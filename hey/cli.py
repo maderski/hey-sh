@@ -22,22 +22,36 @@ NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+([a-z0-9/.$~!{].*?)\s*$")
 def _looks_like_command(text: str) -> bool:
     """Return True if text resembles a shell command rather than prose.
 
-    A single bare word is always accepted (e.g. "pwd").  For multi-word text,
-    at least one argument (word after the first) must contain a shell-typical
-    token: a flag (-x/--flag), a path (/dir, ./rel, ~/home), a sigil ($VAR),
-    a glob (*), a quoted string, or a dotted filename (file.txt, script.sh).
-    This accepts "ls -la" and "python3 script.py" while rejecting lowercase
-    prose like "shows hidden files" or "searches recursively".
+    A single bare word is always accepted (e.g. "pwd").  For multi-word text
+    there are two acceptance paths:
+
+    1. Shell-token path: at least one argument (word after the first) contains
+       a flag (-x/--flag), a path (/dir, ./rel, ~/home), a sigil ($VAR), a
+       glob (*), a quoted string, or a dotted filename (file.txt, script.sh).
+       Accepts "ls -la", "find . -name '*.txt'", "python3 script.py".
+
+    2. Subcommand path: no shell token is present but the first word does NOT
+       look like a conjugated prose verb.  Third-person-singular verb forms
+       (e.g. "shows", "lists", "searches", "displays") end in 's' and are
+       longer than three characters — those are rejected as prose.  Short
+       command names and typical tool names ("git", "kubectl", "npm", "grep")
+       don't match that pattern, so "git status" and "kubectl get pods" are
+       accepted.
     """
     words = text.split()
     if len(words) == 1:
         return True
-    return any(
+    if any(
         w[0] in "-/.$~*\"'"
         or "/" in w
         or (len(w) > 1 and "." in w[1:])
         for w in words[1:]
-    )
+    ):
+        return True
+    # Subcommand-style: reject if the first word looks like a prose verb
+    # (ends in 's', longer than three characters — "shows", "lists", etc.).
+    first = words[0]
+    return not (len(first) > 3 and first.endswith("s"))
 
 
 def extract_command(response: str) -> str:

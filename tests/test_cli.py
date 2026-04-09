@@ -33,6 +33,13 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertTrue(cli._looks_like_command("python3 script.py"))
         self.assertTrue(cli._looks_like_command("node app.js"))
 
+    def test_subcommand_style_accepted(self) -> None:
+        self.assertTrue(cli._looks_like_command("git status"))
+        self.assertTrue(cli._looks_like_command("kubectl get pods"))
+        self.assertTrue(cli._looks_like_command("npm install"))
+        self.assertTrue(cli._looks_like_command("docker ps"))
+        self.assertTrue(cli._looks_like_command("grep pattern file"))
+
     def test_prose_rejected(self) -> None:
         self.assertFalse(cli._looks_like_command("shows hidden files"))
         self.assertFalse(cli._looks_like_command("lists all files in directory"))
