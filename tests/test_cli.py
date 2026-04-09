@@ -54,7 +54,7 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertTrue(cli._looks_like_command("Set-Location C:\\Users"))
         self.assertTrue(cli._looks_like_command("Get-Process -Name python"))
 
-    def test_prose_rejected(self) -> None:
+    def test_prose_verbs_rejected(self) -> None:
         self.assertFalse(cli._looks_like_command("shows hidden files"))
         self.assertFalse(cli._looks_like_command("lists all files in directory"))
         self.assertFalse(cli._looks_like_command("searches recursively"))
@@ -62,9 +62,18 @@ class TestLooksLikeCommand(unittest.TestCase):
 
     def test_uppercase_prose_rejected(self) -> None:
         # Uppercase-initial prose verbs must still be rejected via the
-        # case-insensitive _PROSE_VERBS lookup.
+        # case-insensitive _PROSE_STARTERS lookup.
         self.assertFalse(cli._looks_like_command("Shows hidden files"))
         self.assertFalse(cli._looks_like_command("Lists all files in directory"))
+
+    def test_function_word_starters_rejected(self) -> None:
+        # Articles, demonstratives, and pronouns that open explanation sentences
+        # must be rejected; they are never valid command names.
+        self.assertFalse(cli._looks_like_command("This command lists hidden files"))
+        self.assertFalse(cli._looks_like_command("The option shows output"))
+        self.assertFalse(cli._looks_like_command("An alternative approach"))
+        self.assertFalse(cli._looks_like_command("It also displays hidden files"))
+        self.assertFalse(cli._looks_like_command("these files are hidden"))
 
     def test_special_shell_starters_accepted(self) -> None:
         # Commands that start with non-alphanumeric shell tokens must be accepted.
@@ -166,7 +175,7 @@ class TestCliParsing(unittest.TestCase):
     def test_parse_response_options_uppercase_prose_not_treated_as_option(self) -> None:
         # An explanation line starting with an uppercase prose verb (e.g. "Lists
         # all files") must never become an option header — _looks_like_command
-        # rejects it via the case-insensitive _PROSE_VERBS lookup.
+        # rejects it via the case-insensitive _PROSE_STARTERS lookup.
         response = (
             "1. ls -la\n"
             "2. Lists all files including hidden ones\n"
@@ -179,6 +188,23 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(len(options), 2)
         self.assertEqual(options[0]["command"], "ls -la")
         self.assertIn("2. Lists all files", options[0]["body"])
+        self.assertEqual(options[1]["command"], "find . -name '*.txt'")
+
+    def test_parse_response_options_function_word_prose_not_treated_as_option(self) -> None:
+        # "2. This command lists hidden files" must be absorbed into option 1's
+        # body (not promoted to option 2) so the real "2. find ..." line is
+        # correctly selected and executed rather than the prose text.
+        response = (
+            "1. ls -la\n"
+            "2. This command lists hidden files\n"
+            "2. find . -name '*.txt'\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "ls -la")
+        self.assertIn("2. This command lists hidden files", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
 
     def test_parse_response_options_lowercase_prose_not_treated_as_option(self) -> None:

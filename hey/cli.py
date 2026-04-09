@@ -20,12 +20,19 @@ from hey.shell import detect_platform, detect_shell, run_command
 NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+(\S.*?)\s*$")
 
 
-# Third-person-singular verb forms that LLMs commonly use in explanation text.
-# None of these are plausible command names, so matching the first word of a
-# numbered line against this set is a precise way to reject prose without
-# producing false positives for real tool names that happen to end in 's'
-# (e.g. "rails", "nexus", "travis", "terminus").
-_PROSE_VERBS = frozenset({
+# Words that can open a natural-language sentence but can never be a shell
+# command name.  Used (case-insensitively) as the fallback rejection gate in
+# _looks_like_command so that explanation lines like "This command lists hidden
+# files" or "The option shows output" are not promoted to option headers.
+#
+# Two categories:
+#   • Third-person-singular verb forms LLMs use in explanation text.
+#   • English function words (articles, demonstratives, pronouns) that form a
+#     closed, finite set and are never valid command names.  These cover
+#     sentence starters like "This …", "The …", "An …", "It …" that the verb
+#     list alone would miss.
+_PROSE_STARTERS = frozenset({
+    # Third-person singular verbs
     "adds", "allows", "checks", "closes", "connects", "copies", "creates",
     "deletes", "disables", "disconnects", "displays", "enables", "excludes",
     "executes", "filters", "finds", "generates", "gives", "includes",
@@ -34,6 +41,12 @@ _PROSE_VERBS = frozenset({
     "removes", "renames", "requires", "returns", "runs", "saves", "searches",
     "sends", "sets", "shows", "sorts", "starts", "stops", "takes",
     "uninstalls", "updates", "writes",
+    # Articles
+    "a", "an", "the",
+    # Demonstratives
+    "this", "that", "these", "those",
+    # Pronouns that start explanation sentences but are never command names
+    "it", "its",
 })
 
 
@@ -48,9 +61,10 @@ def _looks_like_command(text: str) -> bool:
        glob (*), a quoted string, or a dotted filename (file.txt, script.sh).
        Accepts "ls -la", "find . -name '*.txt'", "python3 script.py".
 
-    2. Subcommand path: no shell token is present but the first word is not a
-       known prose verb.  Accepts "git status", "kubectl get pods", "rails
-       server" while rejecting "shows hidden files", "lists all files".
+    2. Subcommand path: no shell token is present but the first word is not in
+       _PROSE_STARTERS (third-person verbs, articles, demonstratives, pronouns).
+       Accepts "git status", "kubectl get pods", "rails server" while rejecting
+       "shows hidden files", "This command lists hidden files", "The option…".
     """
     words = text.split()
     if len(words) == 1:
@@ -66,7 +80,7 @@ def _looks_like_command(text: str) -> bool:
         for w in words[1:]
     ):
         return True
-    return words[0].lower() not in _PROSE_VERBS
+    return words[0].lower() not in _PROSE_STARTERS
 
 
 def extract_command(response: str) -> str:
