@@ -97,7 +97,7 @@ def _looks_like_command(text: str) -> bool:
         for w in words[1:]
     ):
         return True
-    return len(words) <= 4 and (words[0][0].islower() or "-" in words[0])
+    return len(words) <= 4 and (words[0][0].islower() or "-" in words[0] or len(words) == 2)
 
 
 def extract_command(response: str) -> str:

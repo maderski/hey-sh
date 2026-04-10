@@ -53,6 +53,14 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertTrue(cli._looks_like_command("Get-Process"))
         self.assertTrue(cli._looks_like_command("Set-Location C:\\Users"))
         self.assertTrue(cli._looks_like_command("Get-Process -Name python"))
+        # Title Case tool+subcommand pairs (two words) must be accepted so that
+        # LLM responses like "1. Git status" or "2. Docker ps" are parsed as
+        # real option headers rather than falling back to extract_command().
+        self.assertTrue(cli._looks_like_command("Git status"))
+        self.assertTrue(cli._looks_like_command("Docker ps"))
+        # Three-word invocations with a shell token (dot in filename) are caught
+        # by the shell-token path before the subcommand fallback is reached.
+        self.assertTrue(cli._looks_like_command("Python manage.py runserver"))
 
     def test_prose_verbs_rejected(self) -> None:
         self.assertFalse(cli._looks_like_command("shows hidden files"))
@@ -110,13 +118,14 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertTrue(cli._looks_like_command(": >file"))
 
     def test_title_case_short_prose_rejected(self) -> None:
-        # Short Title Case phrases (≤4 words, no shell tokens) are explanation
-        # prose, not commands. The subcommand fallback must require a lowercase
-        # or hyphen-initial first word so "List hidden files" or "Show output"
-        # are never promoted to option headers.
+        # Title Case explanation phrases with 3+ words and no shell tokens must
+        # be rejected so they are never promoted to option headers. Two-word
+        # Title Case phrases (e.g. "Git status") are intentionally accepted as
+        # tool+subcommand pairs; prose of that length is expected to be caught
+        # by _PROSE_STARTERS before reaching the subcommand fallback.
         self.assertFalse(cli._looks_like_command("List hidden files"))
         self.assertFalse(cli._looks_like_command("Show all processes"))
-        self.assertFalse(cli._looks_like_command("Display output"))
+        self.assertFalse(cli._looks_like_command("Display all output"))
         self.assertFalse(cli._looks_like_command("Enable verbose mode"))
 
     def test_hyphen_initial_multi_word_rejected(self) -> None:
