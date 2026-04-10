@@ -75,6 +75,14 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertFalse(cli._looks_like_command("It also displays hidden files"))
         self.assertFalse(cli._looks_like_command("these files are hidden"))
 
+    def test_imperative_prose_with_flag_rejected(self) -> None:
+        # Imperative explanation text that contains a flag token must be rejected.
+        # The _PROSE_STARTERS check must fire before the shell-token path so
+        # that "Uses -a to include hidden files" is not promoted to a command.
+        self.assertFalse(cli._looks_like_command("Uses -a to include hidden files"))
+        self.assertFalse(cli._looks_like_command("Use -r for recursive search"))
+        self.assertFalse(cli._looks_like_command("Adds -v for verbose output"))
+
     def test_special_shell_starters_accepted(self) -> None:
         # Commands that start with non-alphanumeric shell tokens must be accepted.
         self.assertTrue(cli._looks_like_command("[ -f file ]"))
@@ -188,6 +196,23 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(len(options), 2)
         self.assertEqual(options[0]["command"], "ls -la")
         self.assertIn("2. Lists all files", options[0]["body"])
+        self.assertEqual(options[1]["command"], "find . -name '*.txt'")
+
+    def test_parse_response_options_imperative_prose_with_flag_not_treated_as_option(self) -> None:
+        # "2. Uses -a to include hidden files" contains a flag token (-a) but
+        # must still be absorbed into option 1's body because "uses" is in
+        # _PROSE_STARTERS, which is checked before the shell-token path.
+        response = (
+            "1. ls -la\n"
+            "2. Uses -a to include hidden files\n"
+            "2. find . -name '*.txt'\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "ls -la")
+        self.assertIn("2. Uses -a to include hidden files", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
 
     def test_parse_response_options_function_word_prose_not_treated_as_option(self) -> None:

@@ -41,6 +41,8 @@ _PROSE_STARTERS = frozenset({
     "removes", "renames", "requires", "returns", "runs", "saves", "searches",
     "sends", "sets", "shows", "sorts", "starts", "stops", "takes",
     "uninstalls", "updates", "writes",
+    # Imperative / bare-infinitive forms used in explanation text
+    "use", "uses",
     # Articles
     "a", "an", "the",
     # Demonstratives
@@ -53,25 +55,27 @@ _PROSE_STARTERS = frozenset({
 def _looks_like_command(text: str) -> bool:
     """Return True if text resembles a shell command rather than prose.
 
-    A single bare word is always accepted (e.g. "pwd").  For multi-word text
-    there are two acceptance paths:
+    Checks are applied in this order so that no later heuristic can override
+    an earlier rejection:
 
-    1. Shell-token path: at least one argument (word after the first) contains
-       a flag (-x/--flag), a path (/dir, ./rel, ~/home), a sigil ($VAR), a
-       glob (*), a quoted string, or a dotted filename (file.txt, script.sh).
-       Accepts "ls -la", "find . -name '*.txt'", "python3 script.py".
-
-    2. Subcommand path: no shell token is present but the first word is not in
-       _PROSE_STARTERS (third-person verbs, articles, demonstratives, pronouns).
-       Accepts "git status", "kubectl get pods", "rails server" while rejecting
-       "shows hidden files", "This command lists hidden files", "The option…".
+    1. Single bare word → always a command (e.g. "pwd").
+    2. Hyphen-initial multi-word text → flag description, never a command
+       (e.g. "-l shows long format").
+    3. First word in _PROSE_STARTERS → explanation prose, never a command.
+       This gate must come before the shell-token check so that lines like
+       "Uses -a to include hidden files" or "Adds -r for recursion" are
+       rejected even though they contain flag-like tokens.
+    4. Shell-token path → a remaining argument contains a flag, path, sigil,
+       glob, quoted string, or dotted filename; accept as a command.
+    5. Subcommand path → no shell tokens but first word is not a prose
+       starter; accept as a subcommand-style invocation (e.g. "git status").
     """
     words = text.split()
     if len(words) == 1:
         return True
-    # Multi-word text whose first token is a flag (e.g. "-l shows long format")
-    # is a flag description, not a command invocation.
     if words[0].startswith("-"):
+        return False
+    if words[0].lower() in _PROSE_STARTERS:
         return False
     if any(
         w[0] in "-/.$~*\"'"
@@ -80,7 +84,7 @@ def _looks_like_command(text: str) -> bool:
         for w in words[1:]
     ):
         return True
-    return words[0].lower() not in _PROSE_STARTERS
+    return True
 
 
 def extract_command(response: str) -> str:
