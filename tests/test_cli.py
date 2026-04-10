@@ -109,6 +109,16 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertTrue(cli._looks_like_command("(cd /tmp && ls)"))
         self.assertTrue(cli._looks_like_command(": >file"))
 
+    def test_title_case_short_prose_rejected(self) -> None:
+        # Short Title Case phrases (≤4 words, no shell tokens) are explanation
+        # prose, not commands. The subcommand fallback must require a lowercase
+        # or hyphen-initial first word so "List hidden files" or "Show output"
+        # are never promoted to option headers.
+        self.assertFalse(cli._looks_like_command("List hidden files"))
+        self.assertFalse(cli._looks_like_command("Show all processes"))
+        self.assertFalse(cli._looks_like_command("Display output"))
+        self.assertFalse(cli._looks_like_command("Enable verbose mode"))
+
     def test_hyphen_initial_multi_word_rejected(self) -> None:
         # Multi-word text starting with a hyphen is a flag description, not a
         # command invocation, and must be rejected regardless of what follows.
@@ -285,6 +295,23 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(len(options), 2)
         self.assertEqual(options[0]["command"], "ls -la")
         self.assertIn("2. shows hidden files", options[0]["body"])
+        self.assertEqual(options[1]["command"], "find . -name '*.txt'")
+
+    def test_parse_response_options_title_case_prose_not_treated_as_option(self) -> None:
+        # "2. List hidden files" is short Title Case prose with no shell tokens.
+        # The subcommand fallback must reject it so the real "2. find ..." line
+        # becomes option 2 and is correctly executed instead of prose text.
+        response = (
+            "1. ls -la\n"
+            "2. List hidden files\n"
+            "2. find . -name '*.txt'\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "ls -la")
+        self.assertIn("2. List hidden files", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
 
     def test_parse_response_options_hyphen_flag_line_not_treated_as_option(self) -> None:
