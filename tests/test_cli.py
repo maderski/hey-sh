@@ -83,6 +83,26 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertFalse(cli._looks_like_command("Use -r for recursive search"))
         self.assertFalse(cli._looks_like_command("Adds -v for verbose output"))
 
+    def test_preposition_starters_rejected(self) -> None:
+        # Prepositions that open explanation clauses are never command names.
+        self.assertFalse(cli._looks_like_command("To include hidden files"))
+        self.assertFalse(cli._looks_like_command("By default this enables verbose"))
+        self.assertFalse(cli._looks_like_command("With the -a flag hidden files appear"))
+
+    def test_prose_punctuation_rejected(self) -> None:
+        # Trailing commas and sentence-ending periods are reliable prose signals
+        # and must cause rejection even when the line also contains a flag token,
+        # so that "To include hidden files, add -a." is never a command.
+        self.assertFalse(cli._looks_like_command("To include hidden files, add -a."))
+        self.assertFalse(cli._looks_like_command("find files, then sort"))
+        self.assertFalse(cli._looks_like_command("grep pattern file."))
+
+    def test_bare_dot_path_not_rejected(self) -> None:
+        # The bare "." (current directory) must not trigger the sentence-period
+        # rejection so that "find . -name '*.txt'" remains valid.
+        self.assertTrue(cli._looks_like_command("find . -name file"))
+        self.assertTrue(cli._looks_like_command("grep -r pattern ."))
+
     def test_special_shell_starters_accepted(self) -> None:
         # Commands that start with non-alphanumeric shell tokens must be accepted.
         self.assertTrue(cli._looks_like_command("[ -f file ]"))
@@ -213,6 +233,23 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(len(options), 2)
         self.assertEqual(options[0]["command"], "ls -la")
         self.assertIn("2. Uses -a to include hidden files", options[0]["body"])
+        self.assertEqual(options[1]["command"], "find . -name '*.txt'")
+
+    def test_parse_response_options_preposition_prose_with_flag_not_treated_as_option(self) -> None:
+        # "2. To include hidden files, add -a." starts with "to" (_PROSE_STARTERS)
+        # and also contains prose punctuation; it must be absorbed, not promoted,
+        # so the real option 2 command is still selectable.
+        response = (
+            "1. ls -la\n"
+            "2. To include hidden files, add -a.\n"
+            "2. find . -name '*.txt'\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "ls -la")
+        self.assertIn("2. To include hidden files", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
 
     def test_parse_response_options_function_word_prose_not_treated_as_option(self) -> None:

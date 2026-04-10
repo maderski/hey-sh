@@ -43,6 +43,9 @@ _PROSE_STARTERS = frozenset({
     "uninstalls", "updates", "writes",
     # Imperative / bare-infinitive forms used in explanation text
     "use", "uses",
+    # Prepositions that open explanation clauses but are never command names
+    # ("To include hidden files …", "By default …", "With the -a flag …")
+    "to", "by", "with",
     # Articles
     "a", "an", "the",
     # Demonstratives
@@ -65,10 +68,15 @@ def _looks_like_command(text: str) -> bool:
        This gate must come before the shell-token check so that lines like
        "Uses -a to include hidden files" or "Adds -r for recursion" are
        rejected even though they contain flag-like tokens.
-    4. Shell-token path → a remaining argument contains a flag, path, sigil,
+    4. Prose-punctuation gate → any word ending with a comma or a
+       sentence-ending period (e.g. "files," or "add -a.") signals an
+       explanation clause; reject before the shell-token check so that
+       flag-like tokens inside prose ("…, add -a.") don't rescue it.
+       The bare path token "." is excluded from the period check.
+    5. Shell-token path → a remaining argument contains a flag, path, sigil,
        glob, quoted string, or dotted filename; accept as a command.
-    5. Subcommand path → no shell tokens but first word is not a prose
-       starter; accept as a subcommand-style invocation (e.g. "git status").
+    6. Subcommand path → no shell tokens but the text survived all rejection
+       gates; accept as a subcommand-style invocation (e.g. "git status").
     """
     words = text.split()
     if len(words) == 1:
@@ -76,6 +84,8 @@ def _looks_like_command(text: str) -> bool:
     if words[0].startswith("-"):
         return False
     if words[0].lower() in _PROSE_STARTERS:
+        return False
+    if any(w.endswith(",") or (w != "." and w.endswith(".")) for w in words):
         return False
     if any(
         w[0] in "-/.$~*\"'"
