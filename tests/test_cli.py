@@ -355,6 +355,91 @@ class TestCliParsing(unittest.TestCase):
 
 
 class TestCliMain(unittest.TestCase):
+    def test_main_prints_help_and_exits_for_empty_query(self) -> None:
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream(is_tty=False)
+
+        with patch("sys.argv", ["hey"]), patch("sys.stdin", stdin), patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+            with self.assertRaises(SystemExit) as cm:
+                cli.main()
+
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("usage:", stdout.getvalue())
+
+    def test_main_uses_stdin_as_full_query(self) -> None:
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream("show running docker containers", is_tty=False)
+
+        with patch("sys.argv", ["hey"]), patch("sys.stdin", stdin), patch("sys.stdout", stdout), patch(
+            "sys.stderr", stderr
+        ), patch("hey.cli.detect_shell", return_value="zsh"), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", return_value="docker ps"
+        ) as query_llm, patch("hey.cli.save_history") as save_history:
+            cli.main()
+
+        query_llm.assert_called_once()
+        self.assertEqual(query_llm.call_args.kwargs["prompt"], "show running docker containers")
+        save_history.assert_called_once_with("show running docker containers", "docker ps", "zsh")
+
+    def test_main_appends_piped_stdin_to_query(self) -> None:
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream("foo bar baz", is_tty=False)
+
+        with patch("sys.argv", ["hey", "sort these words"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("hey.cli.detect_shell", return_value="zsh"), patch(
+            "hey.cli.detect_platform", return_value="macOS"
+        ), patch("hey.cli.query_llm", return_value="sort") as query_llm, patch(
+            "hey.cli.save_history"
+        ) as save_history:
+            cli.main()
+
+        self.assertEqual(query_llm.call_args.kwargs["prompt"], "sort these words\nfoo bar baz")
+        save_history.assert_called_once_with("sort these words\nfoo bar baz", "sort", "zsh")
+
+    def test_main_history_flag_prints_history_and_exits(self) -> None:
+        with patch("sys.argv", ["hey", "--history", "--history-n", "5"]), patch("hey.cli.print_history") as print_history:
+            with self.assertRaises(SystemExit) as cm:
+                cli.main()
+
+        self.assertEqual(cm.exception.code, 0)
+        print_history.assert_called_once_with(5)
+
+    def test_main_test_flag_prints_success_and_exits(self) -> None:
+        stdout = FakeStream(is_tty=False)
+
+        with patch("sys.argv", ["hey", "--test"]), patch("sys.stdout", stdout), patch(
+            "hey.cli.load_config", return_value={}
+        ), patch(
+            "hey.cli.ping_llm", return_value={"ok": True, "elapsed_ms": 312, "model": "llama3", "error": None}
+        ) as ping_llm:
+            with self.assertRaises(SystemExit) as cm:
+                cli.main()
+
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn("Endpoint: http://localhost:8080/v1/chat/completions", stdout.getvalue())
+        self.assertIn("OK  312ms  model=llama3", stdout.getvalue())
+        ping_llm.assert_called_once_with("http://localhost:8080/v1/chat/completions", "local")
+
+    def test_main_test_flag_prints_failure_and_exits(self) -> None:
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+
+        with patch("sys.argv", ["hey", "--test"]), patch("sys.stdout", stdout), patch("sys.stderr", stderr), patch(
+            "hey.cli.load_config", return_value={}
+        ), patch(
+            "hey.cli.ping_llm",
+            return_value={"ok": False, "elapsed_ms": None, "model": None, "error": "Could not connect"},
+        ):
+            with self.assertRaises(SystemExit) as cm:
+                cli.main()
+
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("FAIL  Could not connect", stderr.getvalue())
+
     def test_main_exits_noninteractive_on_multiple_options(self) -> None:
         stdout = FakeStream(is_tty=False)
         stderr = FakeStream(is_tty=False)
@@ -418,6 +503,39 @@ class TestCliMain(unittest.TestCase):
         save_history.assert_called_once_with("ambiguous query", "uname -r", "zsh")
         self.assertIn("Selected: uname -r", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
+
+    def test_main_run_flag_executes_command_without_prompt(self) -> None:
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream(is_tty=False)
+
+        with patch("sys.argv", ["hey", "--run", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("hey.cli.detect_shell", return_value="zsh"), patch(
+            "hey.cli.detect_platform", return_value="macOS"
+        ), patch("hey.cli.query_llm", return_value="ls -la"), patch("hey.cli.save_history"), patch(
+            "hey.cli.shutil.which", return_value="/bin/ls"
+        ), patch("hey.cli.run_command", return_value=0) as run_command:
+            cli.main()
+
+        run_command.assert_called_once_with("ls -la", "zsh")
+
+    def test_main_copy_flag_reports_success(self) -> None:
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream(is_tty=False)
+
+        with patch("sys.argv", ["hey", "--copy", "--no-run", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("hey.cli.detect_shell", return_value="zsh"), patch(
+            "hey.cli.detect_platform", return_value="macOS"
+        ), patch("hey.cli.query_llm", return_value="ls -la"), patch("hey.cli.save_history"), patch(
+            "hey.cli.copy_to_clipboard", return_value=True
+        ) as copy_to_clipboard:
+            cli.main()
+
+        copy_to_clipboard.assert_called_once_with("ls -la")
+        self.assertIn("Copied to clipboard.", stdout.getvalue())
 
 
 if __name__ == "__main__":
