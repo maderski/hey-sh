@@ -42,7 +42,7 @@ _PROSE_STARTERS = frozenset({
     "sends", "sets", "shows", "sorts", "starts", "stops", "takes",
     "uninstalls", "updates", "writes",
     # Imperative / bare-infinitive forms used in explanation text
-    "use", "uses",
+    "try", "tries", "use", "uses",
     # Prepositions that open explanation clauses but are never command names
     # ("To include hidden files …", "By default …", "With the -a flag …")
     "to", "by", "with",
@@ -73,10 +73,13 @@ def _looks_like_command(text: str) -> bool:
        explanation clause; reject before the shell-token check so that
        flag-like tokens inside prose ("…, add -a.") don't rescue it.
        The bare path token "." is excluded from the period check.
-    5. Shell-token path → a remaining argument contains a flag, path, sigil,
-       glob, quoted string, or dotted filename; accept as a command.
-    6. Subcommand path → no shell tokens but the text survived all rejection
-       gates; accept as a subcommand-style invocation (e.g. "git status").
+    5. Shell-token path → a remaining argument starts with a flag, path,
+       sigil, glob, quote, or shell operator (>, <, |, &, ;), or contains
+       an embedded / or a mid-word dot; accept as a command.
+    6. Subcommand path → no shell tokens but ≤ 4 words survived all
+       rejection gates; accept as a subcommand-style invocation such as
+       "git status" or "kubectl get pods".  Longer phrases are rejected
+       because genuine subcommand invocations are almost always short.
     """
     words = text.split()
     if len(words) == 1:
@@ -88,13 +91,13 @@ def _looks_like_command(text: str) -> bool:
     if any(w.endswith(",") or (w != "." and w.endswith(".")) for w in words):
         return False
     if any(
-        w[0] in "-/.$~*\"'"
+        w[0] in "-/.$~*\"'><|&;"
         or "/" in w
         or (len(w) > 1 and "." in w[1:])
         for w in words[1:]
     ):
         return True
-    return True
+    return len(words) <= 4
 
 
 def extract_command(response: str) -> str:
