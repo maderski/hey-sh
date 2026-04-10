@@ -179,6 +179,23 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(options[0]["command"], "[ -f file ] && cat file")
         self.assertEqual(options[1]["command"], "(cd /tmp && ls)")
 
+    def test_parse_response_options_ignores_code_fences(self) -> None:
+        response = (
+            "```bash\n"
+            "1. cat /etc/arch-release\n"
+            "Check the distro release file.\n"
+            "2. uname -r\n"
+            "Show the kernel version.\n"
+            "```\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "cat /etc/arch-release")
+        self.assertNotIn("```", options[0]["body"])
+        self.assertEqual(options[1]["command"], "uname -r")
+
     def test_parse_response_options_uppercase_commands_parsed(self) -> None:
         # Uppercase-initial option headers (e.g. PowerShell cmdlets) must be
         # parsed as selectable options, not dropped, so main() never falls back
@@ -476,6 +493,28 @@ class TestCliMain(unittest.TestCase):
             "hey.cli.detect_platform", return_value="macOS"
         ), patch(
             "hey.cli.query_llm", return_value="1. ls -la\nLists all files."
+        ), patch(
+            "hey.cli.save_history"
+        ) as save_history:
+            cli.main()
+
+        save_history.assert_called_once_with("list files", "ls -la", "zsh")
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_main_uses_parsed_command_for_fenced_single_option_response(self) -> None:
+        # Fenced numbered output must still be parsed as a single selectable
+        # option so main() does not fall back to extract_command(response) and
+        # save the literal "1. ls -la" line.
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream(is_tty=False)
+
+        with patch("sys.argv", ["hey", "--no-run", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("hey.cli.detect_shell", return_value="zsh"), patch(
+            "hey.cli.detect_platform", return_value="macOS"
+        ), patch(
+            "hey.cli.query_llm", return_value="```bash\n1. ls -la\nLists all files.\n```"
         ), patch(
             "hey.cli.save_history"
         ) as save_history:

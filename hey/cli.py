@@ -116,13 +116,17 @@ def extract_command(response: str) -> str:
     return lines[0].strip() if lines else response.strip()
 
 
+def _is_code_fence(line: str) -> bool:
+    return line.strip().startswith("```")
+
+
 def parse_response_options(response: str) -> list[dict[str, str]]:
     lines = response.splitlines()
 
     # Only treat as numbered options if the first non-empty line is "1. <command>".
     # This prevents --explain responses (plain command followed by numbered
     # explanation lines) from being misclassified as ambiguous options.
-    first_content = next((l for l in lines if l.strip()), "")
+    first_content = next((l for l in lines if l.strip() and not _is_code_fence(l)), "")
     first_match = NUMBERED_OPTION_RE.match(first_content)
     if not first_match or first_match.group(1) != "1" or not _looks_like_command(first_match.group(2)):
         return []
@@ -133,6 +137,8 @@ def parse_response_options(response: str) -> list[dict[str, str]]:
     next_expected = 1  # only accept strictly sequential option numbers
 
     for raw_line in lines:
+        if _is_code_fence(raw_line):
+            continue
         match = NUMBERED_OPTION_RE.match(raw_line)
         # Treat as a new option header only if the number is the next expected one.
         # Explanation lines that happen to start with a number (e.g. "1. -l flag")
