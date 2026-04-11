@@ -159,14 +159,23 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertFalse(cli._looks_like_command("Enable verbose mode"))
 
     def test_single_word_prose_starter_rejected(self) -> None:
-        # Single-word entries from _PROSE_STARTERS must be rejected before the
-        # single-bare-word acceptance gate, so that "2. Alternative" or
+        # Single-word entries from _PROSE_STARTERS must be rejected so that
         # "2. lists" in LLM output is never promoted to an option header.
         self.assertFalse(cli._looks_like_command("lists"))
         self.assertFalse(cli._looks_like_command("shows"))
         self.assertFalse(cli._looks_like_command("this"))
         self.assertFalse(cli._looks_like_command("it"))
         self.assertFalse(cli._looks_like_command("the"))
+
+    def test_single_word_uppercase_non_starter_rejected(self) -> None:
+        # Single Title Case words that are NOT in _PROSE_STARTERS but are
+        # clearly not command names must also be rejected so that option
+        # headers like "2. Alternative" never displace the real command.
+        # Gate 5 rejects them because they are uppercase with no / or -.
+        self.assertFalse(cli._looks_like_command("Alternative"))
+        self.assertFalse(cli._looks_like_command("None"))
+        self.assertFalse(cli._looks_like_command("Output"))
+        self.assertFalse(cli._looks_like_command("Default"))
 
     def test_hyphen_initial_single_word_rejected(self) -> None:
         # A lone flag token must be rejected whether or not it has trailing words.
@@ -460,10 +469,8 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(options[1]["command"], "cut -d' ' -f1,2 file.txt")
 
     def test_parse_response_options_single_word_prose_starter_not_treated_as_option(self) -> None:
-        # "2. lists" is a single-word prose label. Without the prose-starter
-        # check preceding the single-word acceptance gate it would be promoted
-        # to option 2, consuming the real "2. find ..." line into option 1's
-        # body and causing selection/run/copy to use the wrong command.
+        # "2. lists" is a single-word prose label that must be absorbed into
+        # option 1's body so the real "2. find ..." line becomes option 2.
         response = (
             "1. ls -la\n"
             "2. lists\n"
@@ -475,6 +482,24 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(len(options), 2)
         self.assertEqual(options[0]["command"], "ls -la")
         self.assertIn("2. lists", options[0]["body"])
+        self.assertEqual(options[1]["command"], "find . -name '*.txt'")
+
+    def test_parse_response_options_single_word_uppercase_label_not_treated_as_option(self) -> None:
+        # "2. Alternative" is a Title Case label not in _PROSE_STARTERS; it
+        # must still be absorbed (not promoted) so the real "2. find ..." line
+        # is correctly returned as option 2.  This is the exact scenario
+        # described in the bug report: 1. ls -la\n2. Alternative\n2. find ...
+        response = (
+            "1. ls -la\n"
+            "2. Alternative\n"
+            "2. find . -name '*.txt'\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "ls -la")
+        self.assertIn("2. Alternative", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
 
     def test_parse_response_options_hyphen_flag_line_not_treated_as_option(self) -> None:

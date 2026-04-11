@@ -89,14 +89,10 @@ def _looks_like_command(text: str) -> bool:
     1. Hyphen-initial text → flag description, never a command (e.g. "-l",
        "-l shows long format").  Applies to single- and multi-word text.
     2. First word in _PROSE_STARTERS → explanation prose, never a command.
-       Applies to single- and multi-word text, so that single-word labels
-       like "Alternative" or "None" that happen to be in the set are rejected
-       before the single-word acceptance gate fires.  Must also precede the
-       shell-token check so that lines like "Uses -a to include hidden files"
-       are rejected even though they contain flag-like tokens.
-    3. Single bare word that survived gates 1–2 → always a command (e.g.
-       "pwd").
-    4. Prose-punctuation gate → any plain-text word ending with a comma or a
+       Applies to single- and multi-word text.  Must precede the shell-token
+       check so that lines like "Uses -a to include hidden files" are rejected
+       even though they contain flag-like tokens.
+    3. Prose-punctuation gate → any plain-text word ending with a comma or a
        sentence-ending period (e.g. "files," or "add -a.") signals an
        explanation clause; reject before the shell-token check so that
        flag-like tokens inside prose ("…, add -a.") don't rescue it.
@@ -104,18 +100,21 @@ def _looks_like_command(text: str) -> bool:
        exempted so that tokens like $1, inside awk '{print $1, $2}' or
        paths ending with . do not trigger a false rejection.
        The bare "." token is also excluded from the period check.
-    5. Shell-token path → a remaining argument (words[1:]) starts with a
+    4. Shell-token path → a remaining argument (words[1:]) starts with a
        flag, path, sigil, glob, quote, or shell operator (>, <, |, &, ;),
        or contains an embedded / or a mid-word dot; accept as a command.
        Note: words[0] is not re-examined here; its path/hyphen signals are
-       handled in gate 6 to avoid double-checking after gates 1–2.
-    6. Subcommand path → no shell tokens but ≤ 4 words survived all
-       rejection gates; accept when the first token is:
-       • lowercase (e.g. "git status", "kubectl get pods")
+       handled in gate 5 to avoid double-checking after gates 1–2.
+    5. Command/subcommand path → ≤ 4 words survived all rejection gates;
+       accept when the first token is:
+       • lowercase (e.g. "pwd", "git status", "kubectl get pods")
        • a path containing / (e.g. "/usr/bin/kubectl get pods", "./run.sh")
-       • a hyphenated tool name (e.g. "docker-compose up")
+       • a hyphenated tool name (e.g. "docker-compose", "docker-compose up")
        • the first of exactly 2 words, allowing Title Case tool+subcommand
          pairs such as "Git status" or "Docker ps".
+       Single uppercase words with no path or hyphen (e.g. "Alternative",
+       "None") are rejected here because real command names are lowercase or
+       contain a distinguishing character (/, -).
        Longer all-prose phrases (3+ words, no shell tokens, no path) are
        rejected because genuine subcommand invocations are almost always short.
        Known limitation: 2-word Title Case phrases whose first word is not
@@ -128,8 +127,6 @@ def _looks_like_command(text: str) -> bool:
         return False
     if words[0].lower() in _PROSE_STARTERS:
         return False
-    if len(words) == 1:
-        return True
     if any(
         (w.endswith(",") or (w != "." and w.endswith(".")))
         and not any(c in _SHELL_TOKEN_CHARS for c in w)
