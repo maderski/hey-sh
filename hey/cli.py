@@ -86,13 +86,16 @@ def _looks_like_command(text: str) -> bool:
     Checks are applied in this order so that no later heuristic can override
     an earlier rejection:
 
-    1. Single bare word → always a command (e.g. "pwd").
-    2. Hyphen-initial multi-word text → flag description, never a command
-       (e.g. "-l shows long format").
-    3. First word in _PROSE_STARTERS → explanation prose, never a command.
-       This gate must come before the shell-token check so that lines like
-       "Uses -a to include hidden files" or "Adds -r for recursion" are
-       rejected even though they contain flag-like tokens.
+    1. Hyphen-initial text → flag description, never a command (e.g. "-l",
+       "-l shows long format").  Applies to single- and multi-word text.
+    2. First word in _PROSE_STARTERS → explanation prose, never a command.
+       Applies to single- and multi-word text, so that single-word labels
+       like "Alternative" or "None" that happen to be in the set are rejected
+       before the single-word acceptance gate fires.  Must also precede the
+       shell-token check so that lines like "Uses -a to include hidden files"
+       are rejected even though they contain flag-like tokens.
+    3. Single bare word that survived gates 1–2 → always a command (e.g.
+       "pwd").
     4. Prose-punctuation gate → any plain-text word ending with a comma or a
        sentence-ending period (e.g. "files," or "add -a.") signals an
        explanation clause; reject before the shell-token check so that
@@ -105,7 +108,7 @@ def _looks_like_command(text: str) -> bool:
        flag, path, sigil, glob, quote, or shell operator (>, <, |, &, ;),
        or contains an embedded / or a mid-word dot; accept as a command.
        Note: words[0] is not re-examined here; its path/hyphen signals are
-       handled in gate 6 to avoid double-checking after gates 2–4.
+       handled in gate 6 to avoid double-checking after gates 1–2.
     6. Subcommand path → no shell tokens but ≤ 4 words survived all
        rejection gates; accept when the first token is:
        • lowercase (e.g. "git status", "kubectl get pods")
@@ -121,12 +124,12 @@ def _looks_like_command(text: str) -> bool:
        dictionary.  In practice these are uncommon in option headers.
     """
     words = text.split()
-    if len(words) == 1:
-        return True
     if words[0].startswith("-"):
         return False
     if words[0].lower() in _PROSE_STARTERS:
         return False
+    if len(words) == 1:
+        return True
     if any(
         (w.endswith(",") or (w != "." and w.endswith(".")))
         and not any(c in _SHELL_TOKEN_CHARS for c in w)

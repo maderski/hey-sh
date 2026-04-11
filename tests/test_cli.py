@@ -158,6 +158,21 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertFalse(cli._looks_like_command("Display all output"))
         self.assertFalse(cli._looks_like_command("Enable verbose mode"))
 
+    def test_single_word_prose_starter_rejected(self) -> None:
+        # Single-word entries from _PROSE_STARTERS must be rejected before the
+        # single-bare-word acceptance gate, so that "2. Alternative" or
+        # "2. lists" in LLM output is never promoted to an option header.
+        self.assertFalse(cli._looks_like_command("lists"))
+        self.assertFalse(cli._looks_like_command("shows"))
+        self.assertFalse(cli._looks_like_command("this"))
+        self.assertFalse(cli._looks_like_command("it"))
+        self.assertFalse(cli._looks_like_command("the"))
+
+    def test_hyphen_initial_single_word_rejected(self) -> None:
+        # A lone flag token must be rejected whether or not it has trailing words.
+        self.assertFalse(cli._looks_like_command("-v"))
+        self.assertFalse(cli._looks_like_command("-l"))
+
     def test_hyphen_initial_multi_word_rejected(self) -> None:
         # Multi-word text starting with a hyphen is a flag description, not a
         # command invocation, and must be rejected regardless of what follows.
@@ -443,6 +458,24 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(len(options), 2)
         self.assertEqual(options[0]["command"], "awk '{print $1, $2}' file.txt")
         self.assertEqual(options[1]["command"], "cut -d' ' -f1,2 file.txt")
+
+    def test_parse_response_options_single_word_prose_starter_not_treated_as_option(self) -> None:
+        # "2. lists" is a single-word prose label. Without the prose-starter
+        # check preceding the single-word acceptance gate it would be promoted
+        # to option 2, consuming the real "2. find ..." line into option 1's
+        # body and causing selection/run/copy to use the wrong command.
+        response = (
+            "1. ls -la\n"
+            "2. lists\n"
+            "2. find . -name '*.txt'\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "ls -la")
+        self.assertIn("2. lists", options[0]["body"])
+        self.assertEqual(options[1]["command"], "find . -name '*.txt'")
 
     def test_parse_response_options_hyphen_flag_line_not_treated_as_option(self) -> None:
         # An explanation line starting with a flag ("-l ...") must never become
