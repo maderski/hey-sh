@@ -167,12 +167,23 @@ def extract_command(response: str) -> str:
 def parse_response_options(response: str) -> list[dict[str, str]]:
     lines = response.splitlines()
 
-    # Only treat as numbered options if the first non-empty, non-fence line is
-    # "1. <command>".  This prevents --explain responses (plain command followed
-    # by numbered explanation lines) from being misclassified as ambiguous options.
-    first_content = next((line for line in lines if line.strip() and not line.strip().startswith("```")), "")
-    first_match = _NUMBERED_OPTION_RE.match(first_content)
-    if not first_match or first_match.group(1) != "1" or not _looks_like_command(first_match.group(2)):
+    # Scan for the first valid "1. <command>" option header, skipping code fences
+    # and any introductory prose the model may have prepended (e.g. "Here are a
+    # few options:").  Requiring option 1 to be present (and to look like a
+    # command) prevents --explain responses (plain command followed by numbered
+    # explanation lines) from being misclassified as ambiguous options.
+    first_match = next(
+        (
+            m
+            for line in lines
+            if not line.strip().startswith("```")
+            if (m := _NUMBERED_OPTION_RE.match(line))
+            and m.group(1) == "1"
+            and _looks_like_command(m.group(2))
+        ),
+        None,
+    )
+    if first_match is None:
         return []
 
     # Each option dict has three keys:

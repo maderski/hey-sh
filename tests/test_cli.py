@@ -209,6 +209,23 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(options[0]["command"], "[ -f file ] && cat file")
         self.assertEqual(options[1]["command"], "(cd /tmp && ls)")
 
+    def test_parse_response_options_skips_introductory_prose(self) -> None:
+        # Models sometimes prepend a lead-in line before the numbered list.
+        # parse_response_options must find option 1 even when prose comes first.
+        response = (
+            "Here are a few options:\n"
+            "1. cat /etc/arch-release\n"
+            "Check the distro release file.\n"
+            "2. uname -r\n"
+            "Show the kernel version.\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "cat /etc/arch-release")
+        self.assertEqual(options[1]["command"], "uname -r")
+
     def test_parse_response_options_ignores_code_fences(self) -> None:
         response = (
             "```bash\n"
