@@ -90,6 +90,12 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertFalse(cli._looks_like_command("Uses -a to include hidden files"))
         self.assertFalse(cli._looks_like_command("Use -r for recursive search"))
         self.assertFalse(cli._looks_like_command("Adds -v for verbose output"))
+        # Base-form (imperative) verbs that open numbered explanation steps must
+        # also be caught before the shell-token check rescues them via a flag.
+        self.assertFalse(cli._looks_like_command("Add -a to include hidden files"))
+        self.assertFalse(cli._looks_like_command("Note that -v enables verbose output"))
+        self.assertFalse(cli._looks_like_command("Include -r for recursive search"))
+        self.assertFalse(cli._looks_like_command("Append --format=json for JSON output"))
 
     def test_preposition_starters_rejected(self) -> None:
         # Prepositions that open explanation clauses are never command names.
@@ -269,6 +275,25 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(len(options), 2)
         self.assertEqual(options[0]["command"], "ls -la")
         self.assertIn("2. Uses -a to include hidden files", options[0]["body"])
+        self.assertEqual(options[1]["command"], "find . -name '*.txt'")
+
+    def test_parse_response_options_base_form_imperative_prose_with_flag_not_treated_as_option(self) -> None:
+        # "2. Add -a to include hidden files" uses an imperative base form
+        # ("add") with a flag token (-a).  Without "add" in _PROSE_STARTERS the
+        # shell-token check rescues the line, next_expected advances to 3, and
+        # the real "2. find ..." line is swallowed into the body — so option 2
+        # runs the prose string instead of the actual command.
+        response = (
+            "1. ls -la\n"
+            "2. Add -a to include hidden files\n"
+            "2. find . -name '*.txt'\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "ls -la")
+        self.assertIn("2. Add -a to include hidden files", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
 
     def test_parse_response_options_preposition_prose_with_flag_not_treated_as_option(self) -> None:

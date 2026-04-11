@@ -25,8 +25,12 @@ NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+(\S.*?)\s*$")
 # _looks_like_command so that explanation lines like "This command lists hidden
 # files" or "The option shows output" are not promoted to option headers.
 #
-# Two categories:
+# Three categories:
 #   • Third-person-singular verb forms LLMs use in explanation text.
+#   • Imperative / bare-infinitive forms (base forms of the verbs above) that
+#     open numbered explanation steps like "Add -a to include hidden files".
+#     These must appear here so they are rejected BEFORE the shell-token check
+#     can rescue them via a flag argument on the same line.
 #   • English function words (articles, demonstratives, pronouns) that form a
 #     closed, finite set and are never valid command names.  These cover
 #     sentence starters like "This …", "The …", "An …", "It …" that the verb
@@ -41,8 +45,15 @@ _PROSE_STARTERS = frozenset({
     "removes", "renames", "requires", "returns", "runs", "saves", "searches",
     "sends", "sets", "shows", "sorts", "starts", "stops", "takes",
     "uninstalls", "updates", "writes",
-    # Imperative / bare-infinitive forms used in explanation text
+    # Imperative / bare-infinitive forms used in explanation text.
+    # Paired with their third-person singular forms above so that both
+    # "Uses -a to include hidden files" and "Add -a to include hidden files"
+    # are rejected before the shell-token check can rescue them.
     "try", "tries", "use", "uses",
+    "add",      # base of "adds";  not a standalone POSIX command
+    "note",     # "Note that -v enables verbose" — not a command
+    "include",  # "Include -r for recursive" — not a command
+    "append",   # "Append --format=json for JSON" — not a command
     # Prepositions that open explanation clauses but are never command names
     # ("To include hidden files …", "By default …", "With the -a flag …")
     "to", "by", "with",
