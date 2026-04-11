@@ -4,6 +4,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+# hey.cli imports from hey.llm which imports httpx at module level.  Stub it
+# out before importing hey.cli so the tests run without the real httpx package.
 sys.modules.setdefault("httpx", SimpleNamespace(Client=None, ConnectError=Exception, TimeoutException=Exception, HTTPStatusError=Exception))
 
 from hey import cli
@@ -444,6 +446,17 @@ class TestCliParsing(unittest.TestCase):
     def test_extract_command_strips_inline_backticks(self) -> None:
         self.assertEqual(cli.extract_command("`ls -la`"), "ls -la")
 
+    def test_select_option_single_option_list(self) -> None:
+        # select_option is only called when len(options) > 1, but it must work
+        # correctly with a single-element list: the prompt shows [1-1] and
+        # entering "1" returns the sole option.
+        with patch("builtins.input", return_value="1"):
+            selected = cli.select_option(
+                [{"number": "1", "command": "pwd", "body": "1. pwd"}]
+            )
+
+        self.assertEqual(selected, {"number": "1", "command": "pwd", "body": "1. pwd"})
+
     def test_select_option_accepts_valid_choice_after_retry(self) -> None:
         with patch("builtins.input", side_effect=["x", "2"]):
             selected = cli.select_option(
@@ -629,6 +642,9 @@ class TestCliMain(unittest.TestCase):
         # multiple options — silently picking an arbitrary option would be
         # surprising.  The user must still choose, then the selected command
         # is executed without the subsequent "Run it?" prompt.
+        # Note: side_effect supplies only one input ("1" for the selection
+        # prompt).  The "Run it?" prompt is never shown because --run bypasses
+        # it via the args.run_now branch in main().
         stdout = FakeStream(is_tty=True)
         stderr = FakeStream(is_tty=True)
         stdin = FakeStream(is_tty=True)

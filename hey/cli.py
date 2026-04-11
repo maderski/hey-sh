@@ -17,7 +17,7 @@ from hey.shell import detect_platform, detect_shell, run_command
 # (: >file), and PowerShell cmdlets (Get-Process).  Content filtering
 # (prose verbs, hyphen-initial flag descriptions) is handled entirely by
 # _looks_like_command rather than by this regex.
-NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+(\S.*?)\s*$")
+_NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+(\S.*?)\s*$")
 
 # Characters whose presence in a word indicates a shell token rather than a
 # plain-text prose word.  The prose-punctuation gate (gate 4 in
@@ -43,11 +43,11 @@ _SHELL_TOKEN_CHARS = frozenset("${}'\"/\\*~[]()<>|&;")
 #     sentence starters like "This …", "The …", "An …", "It …" that the verb
 #     list alone would miss.
 #
-# Policy for additions: only add a word if it is (a) never a valid standalone
-# POSIX/shell command name when used as the first token of a multi-word phrase,
-# AND (b) commonly observed opening explanation sentences in LLM output.  Do
-# not add words like "run", "get", "set", or "pass" — these are valid command
-# names or subcommands that would cause false rejections.
+# Policy for additions: a word belongs here only if it is provably absent from
+# POSIX and common tool namespaces as a standalone first-token command, AND is
+# commonly observed opening explanation sentences in LLM output.  Do not add
+# words like "run", "get", "set", or "pass" — these are valid command names or
+# subcommands that would cause false rejections.
 _PROSE_STARTERS = frozenset({
     # Third-person singular verbs
     "adds", "allows", "checks", "closes", "connects", "copies", "creates",
@@ -101,9 +101,11 @@ def _looks_like_command(text: str) -> bool:
        exempted so that tokens like $1, inside awk '{print $1, $2}' or
        paths ending with . do not trigger a false rejection.
        The bare "." token is also excluded from the period check.
-    5. Shell-token path → a remaining argument starts with a flag, path,
-       sigil, glob, quote, or shell operator (>, <, |, &, ;), or contains
-       an embedded / or a mid-word dot; accept as a command.
+    5. Shell-token path → a remaining argument (words[1:]) starts with a
+       flag, path, sigil, glob, quote, or shell operator (>, <, |, &, ;),
+       or contains an embedded / or a mid-word dot; accept as a command.
+       Note: words[0] is not re-examined here; its path/hyphen signals are
+       handled in gate 6 to avoid double-checking after gates 2–4.
     6. Subcommand path → no shell tokens but ≤ 4 words survived all
        rejection gates; accept when the first token is:
        • lowercase (e.g. "git status", "kubectl get pods")
@@ -169,10 +171,17 @@ def parse_response_options(response: str) -> list[dict[str, str]]:
     # "1. <command>".  This prevents --explain responses (plain command followed
     # by numbered explanation lines) from being misclassified as ambiguous options.
     first_content = next((line for line in lines if line.strip() and not line.strip().startswith("```")), "")
-    first_match = NUMBERED_OPTION_RE.match(first_content)
+    first_match = _NUMBERED_OPTION_RE.match(first_content)
     if not first_match or first_match.group(1) != "1" or not _looks_like_command(first_match.group(2)):
         return []
 
+    # Each option dict has three keys:
+    #   "number"  – the option number as a string (e.g. "1")
+    #   "command" – the extracted runnable command string
+    #   "body"    – the full raw block starting with the "N. <command>" header
+    #               line, followed by any explanation lines that belong to this
+    #               option.  Preserved for display purposes (printed by main()
+    #               before the selection prompt via the top-level print(response)).
     options: list[dict[str, str]] = []
     current: Optional[dict[str, str]] = None
     current_body: list[str] = []
@@ -181,7 +190,7 @@ def parse_response_options(response: str) -> list[dict[str, str]]:
     for raw_line in lines:
         if raw_line.strip().startswith("```"):
             continue
-        match = NUMBERED_OPTION_RE.match(raw_line)
+        match = _NUMBERED_OPTION_RE.match(raw_line)
         # Treat as a new option header only if the number is the next expected one.
         # Explanation lines that happen to start with a number (e.g. "1. -l flag")
         # are absorbed into the current option's body instead.
