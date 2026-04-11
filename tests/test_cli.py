@@ -117,6 +117,17 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertTrue(cli._looks_like_command("find . -name file"))
         self.assertTrue(cli._looks_like_command("grep -r pattern ."))
 
+    def test_shell_token_with_comma_or_dot_not_rejected(self) -> None:
+        # Words that contain shell metacharacters ($, {, ', /, …) are shell
+        # tokens, not prose words, and must be exempted from the
+        # prose-punctuation gate even if they happen to end with , or ..
+        # Without this exemption parse_response_options() returns no options
+        # and main() falls back to extract_command(), running a literal
+        # "1. awk …" string instead of the real command.
+        self.assertTrue(cli._looks_like_command("awk '{print $1, $2}' file.txt"))
+        self.assertTrue(cli._looks_like_command("awk '{print $1}' data.csv"))
+        self.assertTrue(cli._looks_like_command("find /var/log/. -name '*.log'"))
+
     def test_special_shell_starters_accepted(self) -> None:
         # Commands that start with non-alphanumeric shell tokens must be accepted.
         self.assertTrue(cli._looks_like_command("[ -f file ]"))
@@ -364,6 +375,25 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(options[0]["command"], "ls -la")
         self.assertIn("2. List hidden files", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
+
+    def test_parse_response_options_awk_command_parsed(self) -> None:
+        # awk '{print $1, $2}' contains $1, which ends with ',' and would
+        # falsely trigger the prose-punctuation gate if shell-token words were
+        # not exempted.  parse_response_options() must return two options so
+        # main() never falls back to extract_command() and saves a literal
+        # "1. awk ..." string.
+        response = (
+            "1. awk '{print $1, $2}' file.txt\n"
+            "Print first two fields.\n"
+            "2. cut -d' ' -f1,2 file.txt\n"
+            "Cut first two fields by space.\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "awk '{print $1, $2}' file.txt")
+        self.assertEqual(options[1]["command"], "cut -d' ' -f1,2 file.txt")
 
     def test_parse_response_options_hyphen_flag_line_not_treated_as_option(self) -> None:
         # An explanation line starting with a flag ("-l ...") must never become

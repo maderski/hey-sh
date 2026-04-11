@@ -19,6 +19,13 @@ from hey.shell import detect_platform, detect_shell, run_command
 # _looks_like_command rather than by this regex.
 NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+(\S.*?)\s*$")
 
+# Characters whose presence in a word indicates a shell token rather than a
+# plain-text prose word.  The prose-punctuation gate (gate 4 in
+# _looks_like_command) skips any word that contains one of these so that
+# shell constructs like awk '{print $1, $2}' or paths like /dir/.hidden are
+# not incorrectly rejected because a token happens to end with , or ..
+_SHELL_TOKEN_CHARS = frozenset("${}'\"/\\*~[]()<>|&;")
+
 
 # Words that can open a natural-language sentence but can never be a shell
 # command name.  Used (case-insensitively) as the fallback rejection gate in
@@ -86,11 +93,14 @@ def _looks_like_command(text: str) -> bool:
        This gate must come before the shell-token check so that lines like
        "Uses -a to include hidden files" or "Adds -r for recursion" are
        rejected even though they contain flag-like tokens.
-    4. Prose-punctuation gate → any word ending with a comma or a
+    4. Prose-punctuation gate → any plain-text word ending with a comma or a
        sentence-ending period (e.g. "files," or "add -a.") signals an
        explanation clause; reject before the shell-token check so that
        flag-like tokens inside prose ("…, add -a.") don't rescue it.
-       The bare path token "." is excluded from the period check.
+       Words that contain a shell metacharacter (see _SHELL_TOKEN_CHARS) are
+       exempted so that tokens like $1, inside awk '{print $1, $2}' or
+       paths ending with . do not trigger a false rejection.
+       The bare "." token is also excluded from the period check.
     5. Shell-token path → a remaining argument starts with a flag, path,
        sigil, glob, quote, or shell operator (>, <, |, &, ;), or contains
        an embedded / or a mid-word dot; accept as a command.
@@ -110,7 +120,11 @@ def _looks_like_command(text: str) -> bool:
         return False
     if words[0].lower() in _PROSE_STARTERS:
         return False
-    if any(w.endswith(",") or (w != "." and w.endswith(".")) for w in words):
+    if any(
+        (w.endswith(",") or (w != "." and w.endswith(".")))
+        and not any(c in _SHELL_TOKEN_CHARS for c in w)
+        for w in words
+    ):
         return False
     if any(
         w[0] in "-/.$~*\"'><|&;"
