@@ -105,9 +105,14 @@ def _looks_like_command(text: str) -> bool:
        sigil, glob, quote, or shell operator (>, <, |, &, ;), or contains
        an embedded / or a mid-word dot; accept as a command.
     6. Subcommand path → no shell tokens but ≤ 4 words survived all
-       rejection gates; accept as a subcommand-style invocation such as
-       "git status" or "kubectl get pods".  Longer phrases are rejected
-       because genuine subcommand invocations are almost always short.
+       rejection gates; accept when the first token is:
+       • lowercase (e.g. "git status", "kubectl get pods")
+       • a path containing / (e.g. "/usr/bin/kubectl get pods", "./run.sh")
+       • a hyphenated tool name (e.g. "docker-compose up")
+       • the first of exactly 2 words, allowing Title Case tool+subcommand
+         pairs such as "Git status" or "Docker ps".
+       Longer all-prose phrases (3+ words, no shell tokens, no path) are
+       rejected because genuine subcommand invocations are almost always short.
        Known limitation: 2-word Title Case phrases whose first word is not
        in _PROSE_STARTERS (e.g. "Show output", "Enable debug") are accepted
        here because they are indistinguishable from "Git status" without a
@@ -133,7 +138,12 @@ def _looks_like_command(text: str) -> bool:
         for w in words[1:]
     ):
         return True
-    return len(words) <= 4 and (words[0][0].islower() or "-" in words[0] or len(words) == 2)
+    return len(words) <= 4 and (
+        words[0][0].islower()
+        or "/" in words[0]   # absolute (/usr/bin/cmd) or relative (./cmd) path
+        or "-" in words[0]   # hyphenated tool name (e.g. docker-compose)
+        or len(words) == 2   # two-word Title Case tool+subcommand (e.g. Git status)
+    )
 
 
 def extract_command(response: str) -> str:

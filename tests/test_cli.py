@@ -117,6 +117,17 @@ class TestLooksLikeCommand(unittest.TestCase):
         self.assertTrue(cli._looks_like_command("find . -name file"))
         self.assertTrue(cli._looks_like_command("grep -r pattern ."))
 
+    def test_absolute_path_commands_accepted(self) -> None:
+        # Commands whose first token is an absolute or relative path must be
+        # accepted even when later args have no shell tokens, so that option
+        # headers like "1. /usr/bin/kubectl get pods" are parsed rather than
+        # falling back to extract_command() which would save the literal
+        # numbered line.
+        self.assertTrue(cli._looks_like_command("/usr/bin/kubectl get pods"))
+        self.assertTrue(cli._looks_like_command("/usr/local/bin/python3 manage.py"))
+        self.assertTrue(cli._looks_like_command("./gradlew build"))
+        self.assertTrue(cli._looks_like_command("/bin/ls"))
+
     def test_shell_token_with_comma_or_dot_not_rejected(self) -> None:
         # Words that contain shell metacharacters ($, {, ', /, …) are shell
         # tokens, not prose words, and must be exempted from the
@@ -375,6 +386,25 @@ class TestCliParsing(unittest.TestCase):
         self.assertEqual(options[0]["command"], "ls -la")
         self.assertIn("2. List hidden files", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
+
+    def test_parse_response_options_absolute_path_command_parsed(self) -> None:
+        # Option headers whose first token is an absolute path must be parsed
+        # as selectable options. Without the "/" check in the subcommand
+        # fallback, parse_response_options() returns no options and main()
+        # falls back to extract_command(), saving a literal "1. /usr/bin/..."
+        # string instead of the real command.
+        response = (
+            "1. /usr/bin/kubectl get pods\n"
+            "List running pods.\n"
+            "2. /usr/bin/kubectl get services\n"
+            "List running services.\n"
+        )
+
+        options = cli.parse_response_options(response)
+
+        self.assertEqual(len(options), 2)
+        self.assertEqual(options[0]["command"], "/usr/bin/kubectl get pods")
+        self.assertEqual(options[1]["command"], "/usr/bin/kubectl get services")
 
     def test_parse_response_options_awk_command_parsed(self) -> None:
         # awk '{print $1, $2}' contains $1, which ends with ',' and would
