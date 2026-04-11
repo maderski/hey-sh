@@ -395,6 +395,22 @@ class TestCliParsing(unittest.TestCase):
 
         self.assertEqual(selected, {"number": "2", "command": "uname -a", "body": "2. uname -a"})
 
+    def test_select_option_returns_none_and_prints_message_after_exhausting_attempts(self) -> None:
+        # After 3 invalid inputs select_option must return None and print a
+        # distinct message so the user knows they were cut off, not that they
+        # cancelled voluntarily (which would be a silent Enter press).
+        stdout = FakeStream(is_tty=True)
+        options = [
+            {"number": "1", "command": "pwd", "body": "1. pwd"},
+            {"number": "2", "command": "uname -a", "body": "2. uname -a"},
+        ]
+
+        with patch("builtins.input", side_effect=["x", "x", "x"]), patch("sys.stdout", stdout):
+            selected = cli.select_option(options)
+
+        self.assertIsNone(selected)
+        self.assertIn("Too many invalid attempts.", stdout.getvalue())
+
 
 class TestCliMain(unittest.TestCase):
     def test_main_prints_help_and_exits_for_empty_query(self) -> None:
@@ -547,6 +563,29 @@ class TestCliMain(unittest.TestCase):
 
         save_history.assert_called_once_with("list files", "ls -la", "zsh")
         self.assertEqual(stderr.getvalue(), "")
+
+    def test_main_run_flag_still_prompts_on_multiple_options(self) -> None:
+        # --run does not skip the selection prompt when the model returns
+        # multiple options — silently picking an arbitrary option would be
+        # surprising.  The user must still choose, then the selected command
+        # is executed without the subsequent "Run it?" prompt.
+        stdout = FakeStream(is_tty=True)
+        stderr = FakeStream(is_tty=True)
+        stdin = FakeStream(is_tty=True)
+
+        with patch("sys.argv", ["hey", "--run", "ambiguous query"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("builtins.input", side_effect=["1"]), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", return_value="1. cat /etc/arch-release\n2. uname -r"
+        ), patch("hey.cli.save_history"), patch(
+            "hey.cli.shutil.which", return_value="/bin/cat"
+        ), patch("hey.cli.run_command", return_value=0) as run_command:
+            cli.main()
+
+        run_command.assert_called_once_with("cat /etc/arch-release", "zsh")
+        self.assertIn("Selected: cat /etc/arch-release", stdout.getvalue())
 
     def test_main_saves_selected_command(self) -> None:
         stdout = FakeStream(is_tty=True)

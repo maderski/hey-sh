@@ -35,6 +35,12 @@ NUMBERED_OPTION_RE = re.compile(r"^\s*(\d+)\.\s+(\S.*?)\s*$")
 #     closed, finite set and are never valid command names.  These cover
 #     sentence starters like "This …", "The …", "An …", "It …" that the verb
 #     list alone would miss.
+#
+# Policy for additions: only add a word if it is (a) never a valid standalone
+# POSIX/shell command name when used as the first token of a multi-word phrase,
+# AND (b) commonly observed opening explanation sentences in LLM output.  Do
+# not add words like "run", "get", "set", or "pass" — these are valid command
+# names or subcommands that would cause false rejections.
 _PROSE_STARTERS = frozenset({
     # Third-person singular verbs
     "adds", "allows", "checks", "closes", "connects", "copies", "creates",
@@ -49,6 +55,7 @@ _PROSE_STARTERS = frozenset({
     # Paired with their third-person singular forms above so that both
     # "Uses -a to include hidden files" and "Add -a to include hidden files"
     # are rejected before the shell-token check can rescue them.
+    # Only base forms that are NOT standalone POSIX commands are listed here.
     "try", "tries", "use", "uses",
     "add",      # base of "adds";  not a standalone POSIX command
     "note",     # "Note that -v enables verbose" — not a command
@@ -91,6 +98,10 @@ def _looks_like_command(text: str) -> bool:
        rejection gates; accept as a subcommand-style invocation such as
        "git status" or "kubectl get pods".  Longer phrases are rejected
        because genuine subcommand invocations are almost always short.
+       Known limitation: 2-word Title Case phrases whose first word is not
+       in _PROSE_STARTERS (e.g. "Show output", "Enable debug") are accepted
+       here because they are indistinguishable from "Git status" without a
+       dictionary.  In practice these are uncommon in option headers.
     """
     words = text.split()
     if len(words) == 1:
@@ -127,17 +138,13 @@ def extract_command(response: str) -> str:
     return lines[0].strip() if lines else response.strip()
 
 
-def _is_code_fence(line: str) -> bool:
-    return line.strip().startswith("```")
-
-
 def parse_response_options(response: str) -> list[dict[str, str]]:
     lines = response.splitlines()
 
-    # Only treat as numbered options if the first non-empty line is "1. <command>".
-    # This prevents --explain responses (plain command followed by numbered
-    # explanation lines) from being misclassified as ambiguous options.
-    first_content = next((l for l in lines if l.strip() and not _is_code_fence(l)), "")
+    # Only treat as numbered options if the first non-empty, non-fence line is
+    # "1. <command>".  This prevents --explain responses (plain command followed
+    # by numbered explanation lines) from being misclassified as ambiguous options.
+    first_content = next((line for line in lines if line.strip() and not line.strip().startswith("```")), "")
     first_match = NUMBERED_OPTION_RE.match(first_content)
     if not first_match or first_match.group(1) != "1" or not _looks_like_command(first_match.group(2)):
         return []
@@ -148,7 +155,7 @@ def parse_response_options(response: str) -> list[dict[str, str]]:
     next_expected = 1  # only accept strictly sequential option numbers
 
     for raw_line in lines:
-        if _is_code_fence(raw_line):
+        if raw_line.strip().startswith("```"):
             continue
         match = NUMBERED_OPTION_RE.match(raw_line)
         # Treat as a new option header only if the number is the next expected one.
@@ -172,9 +179,6 @@ def parse_response_options(response: str) -> list[dict[str, str]]:
         current["body"] = "\n".join(current_body).strip()
         options.append(current)
 
-    if not options:
-        return []
-
     return options
 
 
@@ -195,6 +199,7 @@ def select_option(options: list[dict[str, str]]) -> Optional[dict[str, str]]:
                 return options[choice - 1]
         print("Please enter a valid option number.")
         attempts += 1
+    print("Too many invalid attempts.")
     return None
 
 
@@ -332,6 +337,9 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+        # --run does not skip the selection prompt when there are multiple
+        # options: executing an arbitrary choice without user input would be
+        # surprising.  The prompt is intentional even with --run.
         selected = select_option(options)
         if selected is None:
             print("No option selected.")
