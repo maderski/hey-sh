@@ -443,8 +443,38 @@ class TestCliParsing(unittest.TestCase):
         self.assertIn("2. -l shows long listing format", options[0]["body"])
         self.assertEqual(options[1]["command"], "find . -name '*.txt'")
 
+    def test_extract_command_skips_empty_lines(self) -> None:
+        self.assertEqual(cli.extract_command("\n\nls -la"), "ls -la")
+
+    def test_extract_command_skips_code_fences(self) -> None:
+        self.assertEqual(cli.extract_command("```bash\nls -la\n```"), "ls -la")
+
+    def test_extract_command_falls_back_to_first_line_when_all_fenced(self) -> None:
+        # When every non-empty line is a code fence, fall back to lines[0].strip().
+        self.assertEqual(cli.extract_command("```\n```"), "```")
+
     def test_extract_command_strips_inline_backticks(self) -> None:
         self.assertEqual(cli.extract_command("`ls -la`"), "ls -la")
+
+    def test_select_option_returns_none_on_eof(self) -> None:
+        with patch("builtins.input", side_effect=EOFError):
+            selected = cli.select_option(
+                [
+                    {"number": "1", "command": "pwd", "body": "1. pwd"},
+                    {"number": "2", "command": "uname -a", "body": "2. uname -a"},
+                ]
+            )
+        self.assertIsNone(selected)
+
+    def test_select_option_returns_none_on_empty_answer(self) -> None:
+        with patch("builtins.input", return_value=""):
+            selected = cli.select_option(
+                [
+                    {"number": "1", "command": "pwd", "body": "1. pwd"},
+                    {"number": "2", "command": "uname -a", "body": "2. uname -a"},
+                ]
+            )
+        self.assertIsNone(selected)
 
     def test_select_option_single_option_list(self) -> None:
         # select_option is only called when len(options) > 1, but it must work
@@ -715,6 +745,269 @@ class TestCliMain(unittest.TestCase):
 
         copy_to_clipboard.assert_called_once_with("ls -la")
         self.assertIn("Copied to clipboard.", stdout.getvalue())
+
+    def test_main_copy_flag_reports_failure(self) -> None:
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream(is_tty=False)
+
+        with patch("sys.argv", ["hey", "--copy", "--no-run", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("hey.cli.detect_shell", return_value="zsh"), patch(
+            "hey.cli.detect_platform", return_value="macOS"
+        ), patch("hey.cli.query_llm", return_value="ls -la"), patch("hey.cli.save_history"), patch(
+            "hey.cli.copy_to_clipboard", return_value=False
+        ):
+            cli.main()
+
+        self.assertIn("Could not copy to clipboard.", stderr.getvalue())
+
+    def test_main_prints_error_and_exits_on_llm_exception(self) -> None:
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream(is_tty=False)
+
+        with patch("sys.argv", ["hey", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stderr", stderr
+        ), patch("hey.cli.detect_shell", return_value="zsh"), patch(
+            "hey.cli.detect_platform", return_value="macOS"
+        ), patch("hey.cli.query_llm", side_effect=RuntimeError("connection refused")):
+            with self.assertRaises(SystemExit) as cm:
+                cli.main()
+
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("Error: connection refused", stderr.getvalue())
+
+    def test_main_exits_cleanly_when_option_selection_cancelled(self) -> None:
+        stdout = FakeStream(is_tty=True)
+        stderr = FakeStream(is_tty=True)
+        stdin = FakeStream(is_tty=True)
+
+        with patch("sys.argv", ["hey", "ambiguous query"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("builtins.input", return_value=""), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", return_value="1. cat /etc/arch-release\n2. uname -r"
+        ), patch("hey.cli.save_history") as save_history:
+            with self.assertRaises(SystemExit) as cm:
+                cli.main()
+
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn("No option selected.", stdout.getvalue())
+        save_history.assert_not_called()
+
+    def test_main_interactive_yes_executes_command(self) -> None:
+        stdout = FakeStream(is_tty=True)
+        stderr = FakeStream(is_tty=True)
+        stdin = FakeStream(is_tty=True)
+
+        with patch("sys.argv", ["hey", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("builtins.input", return_value="y"), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", return_value="ls -la"
+        ), patch("hey.cli.save_history"), patch(
+            "hey.cli.shutil.which", return_value="/bin/ls"
+        ), patch("hey.cli.run_command", return_value=0) as run_command:
+            cli.main()
+
+        run_command.assert_called_once_with("ls -la", "zsh")
+
+    def test_main_interactive_keyboard_interrupt_on_run_prompt_exits_cleanly(self) -> None:
+        stdout = FakeStream(is_tty=True)
+        stderr = FakeStream(is_tty=True)
+        stdin = FakeStream(is_tty=True)
+
+        with patch("sys.argv", ["hey", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("builtins.input", side_effect=KeyboardInterrupt), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", return_value="ls -la"
+        ), patch("hey.cli.save_history"):
+            with self.assertRaises(SystemExit) as cm:
+                cli.main()
+
+        self.assertEqual(cm.exception.code, 0)
+
+    def test_main_run_skips_execution_when_command_not_found_and_non_tty(self) -> None:
+        # When the suggested command is not on PATH and stdout is not a TTY,
+        # run_and_handle returns without calling run_command or offer_install.
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream(is_tty=False)
+
+        with patch("sys.argv", ["hey", "--run", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("hey.cli.detect_shell", return_value="zsh"), patch(
+            "hey.cli.detect_platform", return_value="macOS"
+        ), patch("hey.cli.query_llm", return_value="missing-tool --flag"), patch(
+            "hey.cli.save_history"
+        ), patch("hey.cli.shutil.which", return_value=None), patch(
+            "hey.cli.run_command"
+        ) as run_command:
+            cli.main()
+
+        run_command.assert_not_called()
+
+    def test_main_run_offers_install_when_command_not_found_and_tty(self) -> None:
+        # When the suggested command is not on PATH and stdout IS a TTY,
+        # offer_install is invoked; user declines, so run_command is never called.
+        stdout = FakeStream(is_tty=True)
+        stderr = FakeStream(is_tty=True)
+        stdin = FakeStream(is_tty=True)
+
+        with patch("sys.argv", ["hey", "--run", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("builtins.input", return_value="n"), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", return_value="missing-tool --flag"
+        ), patch("hey.cli.save_history"), patch("hey.cli.shutil.which", return_value=None), patch(
+            "hey.cli.run_command"
+        ) as run_command:
+            cli.main()
+
+        run_command.assert_not_called()
+
+    def test_main_offer_install_runs_install_command_on_yes(self) -> None:
+        # User says "y" to install offer, then "y" to run the install command.
+        stdout = FakeStream(is_tty=True)
+        stderr = FakeStream(is_tty=True)
+        stdin = FakeStream(is_tty=True)
+
+        install_response = "brew install missing-tool\nInstalls missing-tool via Homebrew."
+
+        with patch("sys.argv", ["hey", "--run", "do something"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("builtins.input", side_effect=["y", "y"]), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", side_effect=["missing-tool --flag", install_response]
+        ), patch("hey.cli.save_history"), patch(
+            "hey.cli.shutil.which", return_value=None
+        ), patch("hey.cli.run_command", return_value=0) as run_command:
+            cli.main()
+
+        # run_command is called once: for the install command
+        run_command.assert_called_once_with("brew install missing-tool", "zsh")
+
+    def test_main_offer_install_declines_run_on_no(self) -> None:
+        # User says "y" to install offer but "n" to running the install command.
+        stdout = FakeStream(is_tty=True)
+        stderr = FakeStream(is_tty=True)
+        stdin = FakeStream(is_tty=True)
+
+        install_response = "brew install missing-tool"
+
+        with patch("sys.argv", ["hey", "--run", "do something"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("builtins.input", side_effect=["y", "n"]), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", side_effect=["missing-tool --flag", install_response]
+        ), patch("hey.cli.save_history"), patch("hey.cli.shutil.which", return_value=None), patch(
+            "hey.cli.run_command"
+        ) as run_command:
+            cli.main()
+
+        run_command.assert_not_called()
+
+    def test_main_offer_install_on_exit_code_127(self) -> None:
+        # When the command is found but exits with code 127, offer_install fires.
+        # User declines, so no install query is made.
+        stdout = FakeStream(is_tty=True)
+        stderr = FakeStream(is_tty=True)
+        stdin = FakeStream(is_tty=True)
+
+        with patch("sys.argv", ["hey", "--run", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("builtins.input", return_value="n"), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", return_value="ls -la"
+        ), patch("hey.cli.save_history"), patch(
+            "hey.cli.shutil.which", return_value="/bin/ls"
+        ), patch("hey.cli.run_command", return_value=127):
+            cli.main()
+
+        # Completed without error; offer_install was invoked but user declined.
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_main_offer_install_eof_returns_silently(self) -> None:
+        # EOFError on the offer_install prompt must not propagate.
+        stdout = FakeStream(is_tty=True)
+        stderr = FakeStream(is_tty=True)
+        stdin = FakeStream(is_tty=True)
+
+        with patch("sys.argv", ["hey", "--run", "list files"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("builtins.input", side_effect=EOFError), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", return_value="missing-tool --flag"
+        ), patch("hey.cli.save_history"), patch("hey.cli.shutil.which", return_value=None), patch(
+            "hey.cli.run_command"
+        ) as run_command:
+            cli.main()
+
+        run_command.assert_not_called()
+
+    def test_main_offer_install_prints_error_on_llm_failure(self) -> None:
+        # If query_llm raises inside offer_install, the error is printed and the
+        # function returns without crashing.
+        stdout = FakeStream(is_tty=True)
+        stderr = FakeStream(is_tty=True)
+        stdin = FakeStream(is_tty=True)
+
+        with patch("sys.argv", ["hey", "--run", "do something"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch("builtins.input", return_value="y"), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm",
+            side_effect=["missing-tool --flag", RuntimeError("install query failed")],
+        ), patch("hey.cli.save_history"), patch("hey.cli.shutil.which", return_value=None), patch(
+            "hey.cli.run_command"
+        ) as run_command:
+            cli.main()
+
+        run_command.assert_not_called()
+        self.assertIn("Error: install query failed", stderr.getvalue())
+
+    def test_main_offer_install_eof_on_run_prompt_returns_silently(self) -> None:
+        # EOFError on the "Run install command?" prompt must not propagate.
+        stdout = FakeStream(is_tty=True)
+        stderr = FakeStream(is_tty=True)
+        stdin = FakeStream(is_tty=True)
+
+        install_response = "brew install missing-tool"
+
+        with patch("sys.argv", ["hey", "--run", "do something"]), patch("sys.stdin", stdin), patch(
+            "sys.stdout", stdout
+        ), patch("sys.stderr", stderr), patch(
+            "builtins.input", side_effect=["y", EOFError()]
+        ), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", side_effect=["missing-tool --flag", install_response]
+        ), patch("hey.cli.save_history"), patch("hey.cli.shutil.which", return_value=None), patch(
+            "hey.cli.run_command"
+        ) as run_command:
+            cli.main()
+
+        run_command.assert_not_called()
+
+
+class TestMainModule(unittest.TestCase):
+    def test_main_module_entry_point_calls_cli_main(self) -> None:
+        import runpy
+
+        with patch("hey.cli.main") as mock_main:
+            runpy.run_module("hey", run_name="__main__")
+
+        mock_main.assert_called_once()
 
 
 if __name__ == "__main__":

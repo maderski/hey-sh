@@ -141,6 +141,62 @@ class TestLlm(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("Could not connect", result["error"])
 
+    def test_ping_llm_handles_timeout_error(self) -> None:
+        timeout_error = type("TimeoutException", (Exception,), {})
+
+        class TimingOutClient:
+            def __init__(self, timeout: float) -> None:
+                self.timeout = timeout
+
+            def __enter__(self) -> "TimingOutClient":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+            def post(self, endpoint: str, json: dict) -> FakeResponse:
+                raise timeout_error()
+
+        fake_httpx = SimpleNamespace(
+            Client=TimingOutClient,
+            ConnectError=type("ConnectError", (Exception,), {}),
+            TimeoutException=timeout_error,
+            HTTPStatusError=FakeHttpStatusError,
+        )
+
+        with patch.object(llm, "httpx", fake_httpx):
+            result = llm.ping_llm("http://localhost:8080/v1/chat/completions", "local")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("timed out", result["error"])
+
+    def test_ping_llm_handles_generic_exception(self) -> None:
+        class BrokenClient:
+            def __init__(self, timeout: float) -> None:
+                self.timeout = timeout
+
+            def __enter__(self) -> "BrokenClient":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+            def post(self, endpoint: str, json: dict) -> FakeResponse:
+                raise ValueError("unexpected failure")
+
+        fake_httpx = SimpleNamespace(
+            Client=BrokenClient,
+            ConnectError=type("ConnectError", (Exception,), {}),
+            TimeoutException=type("TimeoutException", (Exception,), {}),
+            HTTPStatusError=FakeHttpStatusError,
+        )
+
+        with patch.object(llm, "httpx", fake_httpx):
+            result = llm.ping_llm("http://localhost:8080/v1/chat/completions", "local")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "unexpected failure")
+
     def test_ping_llm_handles_http_status_error(self) -> None:
         http_status_error = FakeHttpStatusError
 
