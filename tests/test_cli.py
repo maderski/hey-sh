@@ -1085,5 +1085,75 @@ class TestMainModule(unittest.TestCase):
         mock_main.assert_called_once()
 
 
+class TestParseVersion(unittest.TestCase):
+    def test_plain_version(self) -> None:
+        self.assertEqual(cli._parse_version("1.2.3"), (1, 2, 3))
+
+    def test_v_prefix_stripped(self) -> None:
+        self.assertEqual(cli._parse_version("v1.2.3"), (1, 2, 3))
+
+    def test_invalid_returns_zero(self) -> None:
+        self.assertEqual(cli._parse_version("not-a-version"), (0,))
+
+
+class TestCheckForUpdate(unittest.TestCase):
+    def _make_response(self, tag: str) -> object:
+        resp = SimpleNamespace()
+        resp.raise_for_status = lambda: None
+        resp.json = lambda: {"tag_name": tag}
+        return resp
+
+    def test_already_up_to_date(self) -> None:
+        with patch("hey.cli.httpx") as mock_httpx, \
+             patch("hey.cli.__version__", "1.0.0"):
+            mock_httpx.get.return_value = self._make_response("v1.0.0")
+            with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                cli.check_for_update()
+            self.assertIn("Already up to date", mock_out.getvalue())
+
+    def test_newer_version_user_confirms(self) -> None:
+        with patch("hey.cli.httpx") as mock_httpx, \
+             patch("hey.cli.__version__", "1.0.0"), \
+             patch("builtins.input", return_value="y"), \
+             patch("subprocess.run") as mock_run:
+            mock_httpx.get.return_value = self._make_response("v1.1.0")
+            mock_run.return_value = SimpleNamespace(returncode=0)
+            with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                cli.check_for_update()
+            self.assertIn("v1.1.0", mock_out.getvalue())
+            self.assertIn("Updated to", mock_out.getvalue())
+            mock_run.assert_called_once()
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("v1.1.0", " ".join(cmd))
+
+    def test_newer_version_user_declines(self) -> None:
+        with patch("hey.cli.httpx") as mock_httpx, \
+             patch("hey.cli.__version__", "1.0.0"), \
+             patch("builtins.input", return_value="n"), \
+             patch("subprocess.run") as mock_run:
+            mock_httpx.get.return_value = self._make_response("v1.1.0")
+            cli.check_for_update()
+            mock_run.assert_not_called()
+
+    def test_network_error_exits(self) -> None:
+        with patch("hey.cli.httpx") as mock_httpx, \
+             patch("hey.cli.__version__", "1.0.0"):
+            mock_httpx.get.side_effect = Exception("connection refused")
+            with self.assertRaises(SystemExit) as ctx:
+                cli.check_for_update()
+            self.assertEqual(ctx.exception.code, 1)
+
+    def test_pip_failure_exits(self) -> None:
+        with patch("hey.cli.httpx") as mock_httpx, \
+             patch("hey.cli.__version__", "1.0.0"), \
+             patch("builtins.input", return_value="y"), \
+             patch("subprocess.run") as mock_run:
+            mock_httpx.get.return_value = self._make_response("v2.0.0")
+            mock_run.return_value = SimpleNamespace(returncode=1)
+            with self.assertRaises(SystemExit) as ctx:
+                cli.check_for_update()
+            self.assertEqual(ctx.exception.code, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

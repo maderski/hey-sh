@@ -1,14 +1,71 @@
 import argparse
 import re
 import shutil
+import subprocess
 import sys
 from typing import Optional
 
+import httpx
+
+from hey import __version__
 from hey.clipboard import copy_to_clipboard
 from hey.config import load_config, resolve_endpoint
 from hey.history import print_history, save_history
 from hey.llm import ping_llm, query_llm
 from hey.shell import detect_platform, detect_shell, run_command
+
+_GITHUB_REPO = "maderski/hey-sh"
+_RELEASES_API = f"https://api.github.com/repos/{_GITHUB_REPO}/releases/latest"
+
+
+def _parse_version(v: str) -> tuple[int, ...]:
+    v = v.lstrip("v")
+    try:
+        return tuple(int(x) for x in v.split("."))
+    except ValueError:
+        return (0,)
+
+
+def check_for_update() -> None:
+    """Check GitHub for a newer release and offer to update."""
+    print(f"Current version: {__version__}")
+    print("Checking for updates...")
+    try:
+        resp = httpx.get(_RELEASES_API, timeout=10, follow_redirects=True)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        print(f"Could not reach GitHub: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    latest_tag = data.get("tag_name", "")
+    latest = _parse_version(latest_tag)
+    current = _parse_version(__version__)
+
+    if latest <= current:
+        print(f"Already up to date ({latest_tag or __version__}).")
+        return
+
+    print(f"New version available: {latest_tag}")
+    try:
+        answer = input("Update now? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    if answer not in ("y", "yes"):
+        return
+
+    install_url = f"git+https://github.com/{_GITHUB_REPO}.git@{latest_tag}"
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", install_url],
+        check=False,
+    )
+    if result.returncode == 0:
+        print(f"Updated to {latest_tag}. Restart hey for changes to take effect.")
+    else:
+        print("Update failed. Try running manually:", file=sys.stderr)
+        print(f"  pip install --upgrade {install_url}", file=sys.stderr)
+        sys.exit(1)
 
 
 # Match any non-whitespace character as the start of the command portion so
@@ -311,8 +368,22 @@ def main() -> None:
         action="store_true",
         help="Test the connection to the LLM endpoint and exit",
     )
+    parser.add_argument(
+        "--version", "-v",
+        action="version",
+        version=f"hey {__version__}",
+    )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Check GitHub for a newer version and update if available",
+    )
 
     args = parser.parse_args()
+
+    if args.update:
+        check_for_update()
+        sys.exit(0)
 
     if args.test:
         print(f"Endpoint: {args.endpoint}")
