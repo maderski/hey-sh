@@ -91,6 +91,8 @@ hey "list all open ports"
 # Run it? [y/N]
 ```
 
+If a prompt is ambiguous, `hey` now prints a short numbered list of candidate commands and asks you to choose one before copying, saving, or running it.
+
 ### Options
 
 | Flag | Short | Description |
@@ -185,6 +187,8 @@ By default, `hey` prompts `[y/N]` after printing a command — but only when bot
 - stdout is redirected
 - `--no-run` is passed
 - `--run` / `-r` is passed (runs immediately instead)
+
+When the model returns multiple command options, `hey` asks you to pick one first. In non-interactive use, it prints the options and exits instead of guessing.
 
 ## History
 
