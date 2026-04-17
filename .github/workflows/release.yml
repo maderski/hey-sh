@@ -76,7 +76,7 @@ jobs:
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
           echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
 
-      - name: Commit version bump, tag, and open PR
+      - name: Commit version bump and tag
         if: steps.pr.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,12 +99,27 @@ jobs:
           "
           git add hey/__init__.py
           git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
+
+          # Use a PAT so the branch push triggers normal CI checks on the PR.
+          # GITHUB_TOKEN-generated events are ignored by Actions and would leave
+          # required status checks permanently pending, blocking the PR merge.
+          git remote set-url origin \
+            "https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}"
           git push origin "$BRANCH"
 
           # Tag the bump commit (not main HEAD) so __version__ matches the tag.
+          # Tag pushes use GITHUB_TOKEN — they do not need to trigger workflow runs.
+          git remote set-url origin \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
           git tag "${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
+      - name: Create release and open bump PR
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          # Use a PAT so gh pr create triggers normal CI on the bump PR.
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
           gh release create "${{ steps.version.outputs.tag }}" \
             --title "${{ steps.version.outputs.tag }}" \
             --generate-notes
@@ -113,5 +128,5 @@ jobs:
             --title "chore: bump version to ${{ steps.version.outputs.tag }}" \
             --body "Automated version bump for release ${{ steps.version.outputs.tag }}. Merge at your convenience — subsequent releases are not blocked by this PR." \
             --base main \
-            --head "$BRANCH" \
+            --head "chore/bump-${{ steps.version.outputs.tag }}" \
             --label "skip-release"
