@@ -55,7 +55,10 @@ jobs:
           # on main does not cause the same tag to be recomputed and recreated.
           LATEST_TAG=$(git tag --sort=-v:refname \
             | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-          CURRENT="${LATEST_TAG:-v0.0.0}"
+          # Fall back to the declared package version when no semver tags exist,
+          # preserving version continuity on first run or tagless repos.
+          PKG_VERSION=$(grep -oP '(?<=__version__ = ")[^"]+' hey/__init__.py)
+          CURRENT="${LATEST_TAG:-$PKG_VERSION}"
           CURRENT="${CURRENT#v}"
           NEW=$(python3 - <<EOF
           parts = "$CURRENT".split(".")
