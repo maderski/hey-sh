@@ -72,18 +72,7 @@ jobs:
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
           echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
 
-      - name: Tag current commit and create release
-        if: steps.pr.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git tag "${{ steps.version.outputs.tag }}"
-          git push origin "${{ steps.version.outputs.tag }}"
-          gh release create "${{ steps.version.outputs.tag }}" \
-            --title "${{ steps.version.outputs.tag }}" \
-            --generate-notes
-
-      - name: Open version bump PR
+      - name: Commit version bump, tag, and open PR
         if: steps.pr.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -92,6 +81,8 @@ jobs:
           gh label create "skip-release" --color "#cccccc" \
             --description "Skip automated release for this PR" 2>/dev/null || true
 
+          # Update __version__ on a branch so the release tag points to code
+          # that declares the correct version, not the previous one.
           BRANCH="chore/bump-${{ steps.version.outputs.tag }}"
           git checkout -b "$BRANCH"
           python3 -c "
@@ -105,9 +96,18 @@ jobs:
           git add hey/__init__.py
           git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
           git push origin "$BRANCH"
+
+          # Tag the bump commit (not main HEAD) so __version__ matches the tag.
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --generate-notes
+
           gh pr create \
             --title "chore: bump version to ${{ steps.version.outputs.tag }}" \
-            --body "Automated version bump after release ${{ steps.version.outputs.tag }}. Merge at your convenience — subsequent releases are not blocked by this PR." \
+            --body "Automated version bump for release ${{ steps.version.outputs.tag }}. Merge at your convenience — subsequent releases are not blocked by this PR." \
             --base main \
             --head "$BRANCH" \
             --label "skip-release"
