@@ -8,6 +8,13 @@ permissions:
   contents: write
   pull-requests: write
 
+# Serialize release runs so each job derives its version from a fully-settled
+# tag state. cancel-in-progress: false queues rather than drops concurrent
+# triggers, preventing lost releases when multiple PRs merge in quick succession.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -51,6 +58,11 @@ jobs:
         if: steps.pr.outputs.skip != 'true'
         id: version
         run: |
+          # Re-fetch tags immediately before computing the next version.
+          # The concurrency guard serializes runs, but the checkout step runs
+          # before the previous job releases the lock, so its tag view may be
+          # stale. Fetching here guarantees we see all tags already pushed.
+          git fetch --tags
           # Use the latest git tag as the base so that a pending version bump PR
           # on main does not cause the same tag to be recomputed and recreated.
           LATEST_TAG=$(git tag --sort=-v:refname \
