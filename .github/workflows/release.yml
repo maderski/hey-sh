@@ -82,7 +82,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Ensure the skip-release label exists
-          gh label create "skip-release" --color "#cccccc" \
+          gh label create "skip-release" --color "cccccc" \
             --description "Skip automated release for this PR" 2>/dev/null || true
 
           # Update __version__ on a branch so the release tag points to code
