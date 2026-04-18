@@ -152,11 +152,6 @@ jobs:
             git add hey/__init__.py
             git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
 
-            # Use a PAT so the branch push triggers normal CI checks on the PR.
-            # GITHUB_TOKEN-generated events are ignored by Actions and would leave
-            # required status checks permanently pending, blocking the PR merge.
-            git remote set-url origin \
-              "https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}"
             git push origin "$BRANCH"
           fi
 
@@ -165,9 +160,6 @@ jobs:
             echo "Tag ${{ steps.version.outputs.tag }} already exists — skipping tag push."
           else
             # Tag the bump commit (not main HEAD) so __version__ matches the tag.
-            # Tag pushes use GITHUB_TOKEN — they do not need to trigger workflow runs.
-            git remote set-url origin \
-              "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
             git fetch origin "$BRANCH"
             git tag "${{ steps.version.outputs.tag }}" "origin/$BRANCH"
             git push origin "${{ steps.version.outputs.tag }}"
@@ -176,7 +168,7 @@ jobs:
       - name: Create release and open bump PR
         if: steps.pr.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Skip release creation if it already exists from a previous attempt.
           if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
