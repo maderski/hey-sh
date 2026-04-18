@@ -57,8 +57,25 @@ jobs:
               done)
           echo "existing_tag=$EXISTING" >> "$GITHUB_OUTPUT"
 
-          LABELS=$(gh api "repos/${{ github.repository }}/commits/$SHA/pulls" \
-            --jq '.[0].labels[].name' 2>/dev/null || true)
+          # Resolve labels for the PR that landed this commit.
+          # Fast path: regular merge commits always have the subject
+          # "Merge pull request #N from …", so extract N and fetch directly.
+          # Slow path: squash/rebase merges don't embed the PR number in the
+          # subject, so fall back to a paginated merge_commit_sha scan which
+          # is exhaustive and not subject to a page-size cap.
+          COMMIT_SUBJECT=$(git log -1 --format=%s "$SHA")
+          PR_NUM=$(printf '%s' "$COMMIT_SUBJECT" \
+            | grep -oP '^Merge pull request #\K\d+(?= from )' || true)
+          if [ -n "$PR_NUM" ]; then
+            LABELS=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUM" \
+              --jq '.labels[].name' 2>/dev/null || true)
+          else
+            LABELS=$(gh api --method GET --paginate \
+              "repos/${{ github.repository }}/pulls" \
+              -f state=closed -f base=main \
+              --jq ".[] | select(.merge_commit_sha == \"$SHA\") | .labels[].name" \
+              2>/dev/null || true)
+          fi
 
           # Stop here if this is the automated version bump PR
           if echo "$LABELS" | grep -qi "^skip-release$"; then
