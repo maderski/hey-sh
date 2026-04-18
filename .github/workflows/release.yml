@@ -57,12 +57,14 @@ jobs:
               done)
           echo "existing_tag=$EXISTING" >> "$GITHUB_OUTPUT"
 
-          # Look up the merged PR by its merge commit SHA. The commits API
-          # does not reliably associate merge commits with their PR, so we
-          # query recently merged PRs directly and match on mergeCommit.oid.
-          LABELS=$(gh pr list --state merged --base main --limit 5 \
-            --json labels,mergeCommit \
-            --jq ".[] | select(.mergeCommit.oid == \"$SHA\") | .labels[].name" \
+          # Look up the merged PR by its merge commit SHA using the REST API.
+          # The commits/{sha}/pulls endpoint does not reliably associate merge
+          # commits with their PR. gh pr list --limit N is capped and can miss
+          # older queued commits under concurrency. The pulls endpoint with
+          # merge_commit_sha targets exactly one PR regardless of queue depth.
+          LABELS=$(gh api "repos/${{ github.repository }}/pulls" \
+            -f state=closed -f base=main -f per_page=100 \
+            --jq ".[] | select(.merge_commit_sha == \"$SHA\") | .labels[].name" \
             2>/dev/null || true)
 
           # Stop here if this is the automated version bump PR
