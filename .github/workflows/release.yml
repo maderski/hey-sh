@@ -81,8 +81,11 @@ jobs:
           # reuse it directly so we never mint a second incremented version.
           if [ -n "${{ steps.pr.outputs.existing_tag }}" ]; then
             TAG="${{ steps.pr.outputs.existing_tag }}"
-            echo "new=${TAG#v}" >> "$GITHUB_OUTPUT"
+            NEW="${TAG#v}"
+            echo "new=$NEW" >> "$GITHUB_OUTPUT"
             echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            SHORT="${{ github.sha }}"
+            echo "branch=chore/bump-${TAG}-${SHORT:0:7}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -109,8 +112,13 @@ jobs:
           print(f"{major}.{minor}.{patch}")
           EOF
           )
+          # Include the short SHA in the branch name so branches are unique per
+          # (version, commit). A stale chore/bump branch from a prior commit that
+          # computed the same version is then never accidentally reused.
+          SHORT="${{ github.sha }}"
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
           echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+          echo "branch=chore/bump-v${NEW}-${SHORT:0:7}" >> "$GITHUB_OUTPUT"
 
       - name: Commit version bump and tag
         if: steps.pr.outputs.skip != 'true'
@@ -121,7 +129,7 @@ jobs:
           gh label create "skip-release" --color "cccccc" \
             --description "Skip automated release for this PR" 2>/dev/null || true
 
-          BRANCH="chore/bump-${{ steps.version.outputs.tag }}"
+          BRANCH="${{ steps.version.outputs.branch }}"
 
           # Skip branch creation if it was already pushed in a previous attempt.
           if git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
@@ -176,7 +184,7 @@ jobs:
               --generate-notes
           fi
 
-          BRANCH="chore/bump-${{ steps.version.outputs.tag }}"
+          BRANCH="${{ steps.version.outputs.branch }}"
 
           # Skip PR creation if one is already open for the bump branch.
           if gh pr list --head "$BRANCH" --state open --json number \
