@@ -57,8 +57,13 @@ jobs:
               done)
           echo "existing_tag=$EXISTING" >> "$GITHUB_OUTPUT"
 
-          LABELS=$(gh api "repos/${{ github.repository }}/commits/$SHA/pulls" \
-            --jq '.[0].labels[].name' 2>/dev/null || true)
+          # Look up the merged PR by its merge commit SHA. The commits API
+          # does not reliably associate merge commits with their PR, so we
+          # query recently merged PRs directly and match on mergeCommit.oid.
+          LABELS=$(gh pr list --state merged --base main --limit 5 \
+            --json labels,mergeCommit \
+            --jq ".[] | select(.mergeCommit.oid == \"$SHA\") | .labels[].name" \
+            2>/dev/null || true)
 
           # Stop here if this is the automated version bump PR
           if echo "$LABELS" | grep -qi "^skip-release$"; then
