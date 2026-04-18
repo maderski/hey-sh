@@ -65,7 +65,7 @@ jobs:
           # is exhaustive and not subject to a page-size cap.
           COMMIT_SUBJECT=$(git log -1 --format=%s "$SHA")
           PR_NUM=$(printf '%s' "$COMMIT_SUBJECT" \
-            | grep -oP '(?<=Merge pull request #)\d+' || true)
+            | grep -oP '^Merge pull request #\K\d+(?= from )' || true)
           if [ -n "$PR_NUM" ]; then
             LABELS=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUM" \
               --jq '.labels[].name' 2>/dev/null || true)
