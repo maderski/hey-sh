@@ -1154,6 +1154,35 @@ class TestCheckForUpdate(unittest.TestCase):
                 cli.check_for_update()
             self.assertEqual(ctx.exception.code, 1)
 
+    def test_keyboard_interrupt_on_update_prompt_returns_silently(self) -> None:
+        with patch("hey.cli.httpx") as mock_httpx, \
+             patch("hey.cli.__version__", "1.0.0"), \
+             patch("builtins.input", side_effect=KeyboardInterrupt), \
+             patch("subprocess.run") as mock_run:
+            mock_httpx.get.return_value = self._make_response("v1.1.0")
+            cli.check_for_update()
+            mock_run.assert_not_called()
+
+    def test_eof_on_update_prompt_returns_silently(self) -> None:
+        with patch("hey.cli.httpx") as mock_httpx, \
+             patch("hey.cli.__version__", "1.0.0"), \
+             patch("builtins.input", side_effect=EOFError), \
+             patch("subprocess.run") as mock_run:
+            mock_httpx.get.return_value = self._make_response("v1.1.0")
+            cli.check_for_update()
+            mock_run.assert_not_called()
+
+
+class TestMainUpdateFlag(unittest.TestCase):
+    def test_update_flag_calls_check_for_update_and_exits(self) -> None:
+        with patch("sys.argv", ["hey", "--update"]), \
+             patch("hey.cli.load_config", return_value={}), \
+             patch("hey.cli.check_for_update") as mock_update:
+            with self.assertRaises(SystemExit) as ctx:
+                cli.main()
+        mock_update.assert_called_once()
+        self.assertEqual(ctx.exception.code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

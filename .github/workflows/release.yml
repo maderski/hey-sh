@@ -45,7 +45,7 @@ jobs:
           # parent, so checking each tag's parent is a reliable idempotency test
           # that prevents re-runs or retries from minting an extra version bump.
           EXISTING=$(git tag --sort=-v:refname \
-            | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' \
+            | { grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' || true; } \
             | while IFS= read -r tag; do
                 parent=$(git rev-parse "${tag}^" 2>/dev/null) || continue
                 [ "$parent" = "$SHA" ] && echo "$tag" && break
