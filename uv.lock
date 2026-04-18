@@ -321,7 +321,6 @@ wheels = [
 
 [[package]]
 name = "hey-sh"
-version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

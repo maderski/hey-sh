@@ -6,7 +6,14 @@ on:
 
 permissions:
   contents: write
-  pull-requests: read
+  pull-requests: write
+
+# Serialize release runs so each job derives its version from a fully-settled
+# tag state. cancel-in-progress: false queues rather than drops concurrent
+# triggers, preventing lost releases when multiple PRs merge in quick succession.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -22,31 +29,80 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Detect bump type from PR labels
-        id: bump
+      - name: Get merged PR labels
+        id: pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Fetch all tags up front so subsequent guards and version derivation
+          # always operate on fully-settled remote tag state.
+          git fetch --tags
+
           SHA="${{ github.sha }}"
-          LABELS=$(gh pr list --state merged --base main \
-            --search "$SHA" --json labels \
+
+          # Detect whether this commit already produced a release tag.
+          # The bump commit (tagged as the release) has github.sha as its direct
+          # parent, so checking each tag's parent is a reliable idempotency test.
+          # We do NOT exit early here — subsequent steps check their own state so
+          # that a partial failure (e.g. release created but bump PR not opened)
+          # can be retried by re-running the workflow.
+          EXISTING=$(git tag --sort=-v:refname \
+            | { grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' || true; } \
+            | while IFS= read -r tag; do
+                parent=$(git rev-parse "${tag}^" 2>/dev/null) || continue
+                [ "$parent" = "$SHA" ] && echo "$tag" && break
+              done)
+          echo "existing_tag=$EXISTING" >> "$GITHUB_OUTPUT"
+
+          LABELS=$(gh api "repos/${{ github.repository }}/commits/$SHA/pulls" \
             --jq '.[0].labels[].name' 2>/dev/null || true)
+
+          # Stop here if this is the automated version bump PR
+          if echo "$LABELS" | grep -qi "^skip-release$"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+          # Determine bump type from PR labels (default: patch)
           if echo "$LABELS" | grep -qi "^major$"; then
-            echo "type=major" >> "$GITHUB_OUTPUT"
+            echo "bump=major" >> "$GITHUB_OUTPUT"
           elif echo "$LABELS" | grep -qi "^minor$"; then
-            echo "type=minor" >> "$GITHUB_OUTPUT"
+            echo "bump=minor" >> "$GITHUB_OUTPUT"
           else
-            echo "type=patch" >> "$GITHUB_OUTPUT"
+            echo "bump=patch" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Bump version
+      - name: Calculate new version
+        if: steps.pr.outputs.skip != 'true'
         id: version
         run: |
-          CURRENT=$(grep -oP '(?<=__version__ = ")[^"]+' hey/__init__.py)
+          # If this commit already has a release tag (rerun after partial failure),
+          # reuse it directly so we never mint a second incremented version.
+          if [ -n "${{ steps.pr.outputs.existing_tag }}" ]; then
+            TAG="${{ steps.pr.outputs.existing_tag }}"
+            NEW="${TAG#v}"
+            echo "new=$NEW" >> "$GITHUB_OUTPUT"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            SHORT="${{ github.sha }}"
+            echo "branch=chore/bump-${TAG}-${SHORT:0:7}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Use the latest git tag as the base so that a pending version bump PR
+          # on main does not cause the same tag to be recomputed and recreated.
+          LATEST_TAG=$(git tag --sort=-v:refname \
+            | { grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' || true; } \
+            | head -1)
+          # Fall back to the declared package version when no semver tags exist,
+          # preserving version continuity on first run or tagless repos.
+          PKG_VERSION=$(grep -oP '(?<=__version__ = ")[^"]+' hey/__init__.py)
+          CURRENT="${LATEST_TAG:-$PKG_VERSION}"
+          CURRENT="${CURRENT#v}"
           NEW=$(python3 - <<EOF
           parts = "$CURRENT".split(".")
           major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
-          bump = "${{ steps.bump.outputs.type }}"
+          bump = "${{ steps.pr.outputs.bump }}"
           if bump == "major":
               major, minor, patch = major + 1, 0, 0
           elif bump == "minor":
@@ -56,21 +112,89 @@ jobs:
           print(f"{major}.{minor}.{patch}")
           EOF
           )
-          sed -i "s/__version__ = \"$CURRENT\"/__version__ = \"$NEW\"/" hey/__init__.py
+          # Include the short SHA in the branch name so branches are unique per
+          # (version, commit). A stale chore/bump branch from a prior commit that
+          # computed the same version is then never accidentally reused.
+          SHORT="${{ github.sha }}"
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
           echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+          echo "branch=chore/bump-v${NEW}-${SHORT:0:7}" >> "$GITHUB_OUTPUT"
 
-      - name: Commit and tag
-        run: |
-          git add hey/__init__.py
-          git commit -m "chore: bump version to ${{ steps.version.outputs.tag }} [skip ci]"
-          git tag "${{ steps.version.outputs.tag }}"
-          git push origin main --tags
-
-      - name: Create GitHub Release
+      - name: Commit version bump and tag
+        if: steps.pr.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            --title "${{ steps.version.outputs.tag }}" \
-            --generate-notes
+          # Ensure the skip-release label exists
+          gh label create "skip-release" --color "cccccc" \
+            --description "Skip automated release for this PR" 2>/dev/null || true
+
+          BRANCH="${{ steps.version.outputs.branch }}"
+
+          # Skip branch creation if it was already pushed in a previous attempt.
+          if git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
+            echo "Branch $BRANCH already exists — skipping commit and branch push."
+          else
+            # Update __version__ on a branch so the release tag points to code
+            # that declares the correct version, not the previous one.
+            git checkout -b "$BRANCH"
+            python3 -c "
+          import re
+          with open('hey/__init__.py') as f:
+              content = f.read()
+          content = re.sub(r'__version__ = \"[^\"]+\"', '__version__ = \"${{ steps.version.outputs.new }}\"', content)
+          with open('hey/__init__.py', 'w') as f:
+              f.write(content)
+          "
+            git add hey/__init__.py
+            git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
+
+            # Use a PAT so the branch push triggers normal CI checks on the PR.
+            # GITHUB_TOKEN-generated events are ignored by Actions and would leave
+            # required status checks permanently pending, blocking the PR merge.
+            git remote set-url origin \
+              "https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}"
+            git push origin "$BRANCH"
+          fi
+
+          # Skip tag push if the tag already exists from a previous attempt.
+          if git rev-parse "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.version.outputs.tag }} already exists — skipping tag push."
+          else
+            # Tag the bump commit (not main HEAD) so __version__ matches the tag.
+            # Tag pushes use GITHUB_TOKEN — they do not need to trigger workflow runs.
+            git remote set-url origin \
+              "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+            git fetch origin "$BRANCH"
+            git tag "${{ steps.version.outputs.tag }}" "origin/$BRANCH"
+            git push origin "${{ steps.version.outputs.tag }}"
+          fi
+
+      - name: Create release and open bump PR
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          # Skip release creation if it already exists from a previous attempt.
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Release ${{ steps.version.outputs.tag }} already exists — skipping."
+          else
+            gh release create "${{ steps.version.outputs.tag }}" \
+              --title "${{ steps.version.outputs.tag }}" \
+              --generate-notes
+          fi
+
+          BRANCH="${{ steps.version.outputs.branch }}"
+
+          # Skip PR creation if one is already open for the bump branch.
+          if gh pr list --head "$BRANCH" --state open --json number \
+              --jq '.[0].number' | grep -q .; then
+            echo "Bump PR for $BRANCH already open — skipping."
+          else
+            gh pr create \
+              --title "chore: bump version to ${{ steps.version.outputs.tag }}" \
+              --body "Automated version bump for release ${{ steps.version.outputs.tag }}. Merge at your convenience — subsequent releases are not blocked by this PR." \
+              --base main \
+              --head "$BRANCH" \
+              --label "skip-release"
+          fi
