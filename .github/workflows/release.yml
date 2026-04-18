@@ -62,7 +62,7 @@ jobs:
           # commits with their PR. gh pr list --limit N is capped and can miss
           # older queued commits under concurrency. The pulls endpoint with
           # merge_commit_sha targets exactly one PR regardless of queue depth.
-          LABELS=$(gh api "repos/${{ github.repository }}/pulls" \
+          LABELS=$(gh api --method GET "repos/${{ github.repository }}/pulls" \
             -f state=closed -f base=main -f per_page=100 \
             --jq ".[] | select(.merge_commit_sha == \"$SHA\") | .labels[].name" \
             2>/dev/null || true)
