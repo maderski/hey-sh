@@ -50,7 +50,10 @@ jobs:
             | { grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' || true; } \
             | while IFS= read -r tag; do
                 parent=$(git rev-parse "${tag}^" 2>/dev/null) || continue
-                [ "$parent" = "$SHA" ] && echo "$tag" && break
+                if [ "$parent" = "$SHA" ]; then
+                  echo "$tag"
+                  break
+                fi
               done)
           echo "existing_tag=$EXISTING" >> "$GITHUB_OUTPUT"
 
