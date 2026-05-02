@@ -1,6 +1,8 @@
 import io
 import sys
 import unittest
+from typing import Optional
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -1127,17 +1129,20 @@ class TestCheckForUpdate(unittest.TestCase):
         return resp
 
     def test_already_up_to_date(self) -> None:
-        with patch("hey.cli.httpx") as mock_httpx, \
+        with patch("hey.cli._find_repo_root", return_value=None), \
+             patch("hey.cli.httpx") as mock_httpx, \
              patch("hey.cli.__version__", "1.0.0"):
             mock_httpx.get.return_value = self._make_response("v1.0.0")
             with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
                 cli.check_for_update()
             self.assertIn("Already up to date", mock_out.getvalue())
 
-    def test_newer_version_user_confirms(self) -> None:
-        with patch("hey.cli.httpx") as mock_httpx, \
+    def test_remote_update_prefers_uv(self) -> None:
+        with patch("hey.cli._find_repo_root", return_value=None), \
+             patch("hey.cli.httpx") as mock_httpx, \
              patch("hey.cli.__version__", "1.0.0"), \
              patch("builtins.input", return_value="y"), \
+             patch("hey.cli.shutil.which", return_value="/usr/local/bin/uv"), \
              patch("subprocess.run") as mock_run:
             mock_httpx.get.return_value = self._make_response("v1.1.0")
             mock_run.return_value = SimpleNamespace(returncode=0)
@@ -1147,10 +1152,27 @@ class TestCheckForUpdate(unittest.TestCase):
             self.assertIn("Updated to", mock_out.getvalue())
             mock_run.assert_called_once()
             cmd = mock_run.call_args[0][0]
+            self.assertEqual(cmd[:4], ["/usr/local/bin/uv", "tool", "install", "--force"])
+            self.assertIn("v1.1.0", cmd[4])
+
+    def test_remote_update_falls_back_to_pip(self) -> None:
+        with patch("hey.cli._find_repo_root", return_value=None), \
+             patch("hey.cli.httpx") as mock_httpx, \
+             patch("hey.cli.__version__", "1.0.0"), \
+             patch("builtins.input", return_value="y"), \
+             patch("hey.cli.shutil.which", return_value=None), \
+             patch("subprocess.run") as mock_run:
+            mock_httpx.get.return_value = self._make_response("v1.1.0")
+            mock_run.return_value = SimpleNamespace(returncode=0)
+            cli.check_for_update()
+            mock_run.assert_called_once()
+            cmd = mock_run.call_args[0][0]
+            self.assertEqual(cmd[:4], [sys.executable, "-m", "pip", "install"])
             self.assertIn("v1.1.0", " ".join(cmd))
 
     def test_newer_version_user_declines(self) -> None:
-        with patch("hey.cli.httpx") as mock_httpx, \
+        with patch("hey.cli._find_repo_root", return_value=None), \
+             patch("hey.cli.httpx") as mock_httpx, \
              patch("hey.cli.__version__", "1.0.0"), \
              patch("builtins.input", return_value="n"), \
              patch("subprocess.run") as mock_run:
@@ -1159,7 +1181,8 @@ class TestCheckForUpdate(unittest.TestCase):
             mock_run.assert_not_called()
 
     def test_network_error_exits(self) -> None:
-        with patch("hey.cli.httpx") as mock_httpx, \
+        with patch("hey.cli._find_repo_root", return_value=None), \
+             patch("hey.cli.httpx") as mock_httpx, \
              patch("hey.cli.__version__", "1.0.0"):
             mock_httpx.get.side_effect = Exception("connection refused")
             with self.assertRaises(SystemExit) as ctx:
@@ -1167,9 +1190,11 @@ class TestCheckForUpdate(unittest.TestCase):
             self.assertEqual(ctx.exception.code, 1)
 
     def test_pip_failure_exits(self) -> None:
-        with patch("hey.cli.httpx") as mock_httpx, \
+        with patch("hey.cli._find_repo_root", return_value=None), \
+             patch("hey.cli.httpx") as mock_httpx, \
              patch("hey.cli.__version__", "1.0.0"), \
              patch("builtins.input", return_value="y"), \
+             patch("hey.cli.shutil.which", return_value=None), \
              patch("subprocess.run") as mock_run:
             mock_httpx.get.return_value = self._make_response("v2.0.0")
             mock_run.return_value = SimpleNamespace(returncode=1)
@@ -1178,7 +1203,8 @@ class TestCheckForUpdate(unittest.TestCase):
             self.assertEqual(ctx.exception.code, 1)
 
     def test_keyboard_interrupt_on_update_prompt_returns_silently(self) -> None:
-        with patch("hey.cli.httpx") as mock_httpx, \
+        with patch("hey.cli._find_repo_root", return_value=None), \
+             patch("hey.cli.httpx") as mock_httpx, \
              patch("hey.cli.__version__", "1.0.0"), \
              patch("builtins.input", side_effect=KeyboardInterrupt), \
              patch("subprocess.run") as mock_run:
@@ -1187,13 +1213,58 @@ class TestCheckForUpdate(unittest.TestCase):
             mock_run.assert_not_called()
 
     def test_eof_on_update_prompt_returns_silently(self) -> None:
-        with patch("hey.cli.httpx") as mock_httpx, \
+        with patch("hey.cli._find_repo_root", return_value=None), \
+             patch("hey.cli.httpx") as mock_httpx, \
              patch("hey.cli.__version__", "1.0.0"), \
              patch("builtins.input", side_effect=EOFError), \
              patch("subprocess.run") as mock_run:
             mock_httpx.get.return_value = self._make_response("v1.1.0")
             cli.check_for_update()
             mock_run.assert_not_called()
+
+    def test_local_checkout_updates_repo_and_reinstalls_when_confirmed(self) -> None:
+        repo_root = Path("/tmp/hey-sh")
+        which_values = {"git": "/usr/bin/git", "uv": "/usr/local/bin/uv"}
+
+        def fake_which(name: str) -> Optional[str]:
+            return which_values.get(name)
+
+        with patch("hey.cli._find_repo_root", return_value=repo_root), \
+             patch("builtins.input", side_effect=["y", "y"]), \
+             patch("hey.cli.shutil.which", side_effect=fake_which), \
+             patch("subprocess.run") as mock_run, \
+             patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+            mock_run.return_value = SimpleNamespace(returncode=0)
+            cli.check_for_update()
+
+        self.assertEqual(mock_run.call_count, 2)
+        first_cmd = mock_run.call_args_list[0].kwargs["args"] if "args" in mock_run.call_args_list[0].kwargs else mock_run.call_args_list[0].args[0]
+        second_cmd = mock_run.call_args_list[1].kwargs["args"] if "args" in mock_run.call_args_list[1].kwargs else mock_run.call_args_list[1].args[0]
+        self.assertEqual(first_cmd, ["/usr/bin/git", "-C", str(repo_root), "pull", "--ff-only"])
+        self.assertEqual(second_cmd, ["/usr/local/bin/uv", "tool", "install", "--force", "."])
+        self.assertEqual(mock_run.call_args_list[1].kwargs["cwd"], str(repo_root))
+        self.assertIn("Reinstalled `hey`", mock_out.getvalue())
+
+    def test_local_checkout_pull_only_prints_refresh_hint(self) -> None:
+        repo_root = Path("/tmp/hey-sh")
+
+        def fake_which(name: str) -> Optional[str]:
+            if name == "git":
+                return "/usr/bin/git"
+            if name == "uv":
+                return "/usr/local/bin/uv"
+            return None
+
+        with patch("hey.cli._find_repo_root", return_value=repo_root), \
+             patch("builtins.input", side_effect=["y", "n"]), \
+             patch("hey.cli.shutil.which", side_effect=fake_which), \
+             patch("subprocess.run") as mock_run, \
+             patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+            mock_run.return_value = SimpleNamespace(returncode=0)
+            cli.check_for_update()
+
+        mock_run.assert_called_once()
+        self.assertIn("Using the updated checkout directly.", mock_out.getvalue())
 
 
 class TestMainUpdateFlag(unittest.TestCase):

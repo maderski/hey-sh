@@ -1,8 +1,10 @@
 import argparse
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -26,9 +28,98 @@ def _parse_version(v: str) -> tuple[int, ...]:
         return (0,)
 
 
+def _find_repo_root(start: Optional[Path] = None) -> Optional[Path]:
+    current = (start or Path(__file__)).resolve().parent
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def _confirm(prompt: str) -> bool:
+    try:
+        answer = input(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer in ("y", "yes")
+
+
+def _run_update_command(
+    cmd: list[str],
+    *,
+    success_message: str,
+    failure_message: str,
+    manual_command: str,
+    cwd: Optional[Path] = None,
+) -> None:
+    result = subprocess.run(cmd, cwd=str(cwd) if cwd is not None else None, check=False)
+    if result.returncode == 0:
+        print(success_message)
+        return
+
+    print(failure_message, file=sys.stderr)
+    print(f"  {manual_command}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _build_remote_update_command(ref: str) -> tuple[list[str], str]:
+    install_target = f"git+https://github.com/{_GITHUB_REPO}.git@{ref}"
+    uv = shutil.which("uv")
+    if uv:
+        return [uv, "tool", "install", "--force", install_target], f"uv tool install --force {install_target}"
+    return (
+        [sys.executable, "-m", "pip", "install", "--upgrade", install_target],
+        f"{shlex.quote(sys.executable)} -m pip install --upgrade {install_target}",
+    )
+
+
 def check_for_update() -> None:
-    """Check GitHub for a newer release and offer to update."""
+    """Update the current checkout or reinstall the latest GitHub release."""
     print(f"Current version: {__version__}")
+
+    repo_root = _find_repo_root()
+    if repo_root is not None:
+        print(f"Detected source checkout: {repo_root}")
+        if not _confirm("Pull the latest changes from this checkout? [y/N] "):
+            return
+
+        git = shutil.which("git")
+        if not git:
+            print("Could not find `git` on PATH.", file=sys.stderr)
+            print(
+                f"  git -C {shlex.quote(str(repo_root))} pull --ff-only",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        _run_update_command(
+            [git, "-C", str(repo_root), "pull", "--ff-only"],
+            success_message="Pulled the latest changes into the local checkout.",
+            failure_message="Could not pull the latest changes. Try running manually:",
+            manual_command=f"git -C {shlex.quote(str(repo_root))} pull --ff-only",
+        )
+
+        uv = shutil.which("uv")
+        if uv and _confirm("Reinstall the global `hey` command from this checkout too? [y/N] "):
+            _run_update_command(
+                [uv, "tool", "install", "--force", "."],
+                cwd=repo_root,
+                success_message="Reinstalled `hey` from the updated checkout.",
+                failure_message="Could not reinstall `hey`. Try running manually:",
+                manual_command=f"cd {shlex.quote(str(repo_root))} && uv tool install --force .",
+            )
+            print("Restart hey for changes to take effect.")
+            return
+
+        if uv:
+            print("Using the updated checkout directly.")
+            print("If your global `hey` command was installed from this repo, rerun `uv tool install --force .` here to refresh it.")
+        else:
+            print("`uv` is not available on PATH.")
+            print(f"To refresh a global install from this repo, run `cd {repo_root}` and then `uv tool install --force .`.")
+        return
+
     print("Checking for updates...")
     try:
         resp = httpx.get(_RELEASES_API, timeout=10, follow_redirects=True)
@@ -47,25 +138,16 @@ def check_for_update() -> None:
         return
 
     print(f"New version available: {latest_tag}")
-    try:
-        answer = input("Update now? [y/N] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return
-    if answer not in ("y", "yes"):
+    if not _confirm("Install the latest release now? [y/N] "):
         return
 
-    install_url = f"git+https://github.com/{_GITHUB_REPO}.git@{latest_tag}"
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", install_url],
-        check=False,
+    cmd, manual_command = _build_remote_update_command(latest_tag)
+    _run_update_command(
+        cmd,
+        success_message=f"Updated to {latest_tag}. Restart hey for changes to take effect.",
+        failure_message="Update failed. Try running manually:",
+        manual_command=manual_command,
     )
-    if result.returncode == 0:
-        print(f"Updated to {latest_tag}. Restart hey for changes to take effect.")
-    else:
-        print("Update failed. Try running manually:", file=sys.stderr)
-        print(f"  pip install --upgrade {install_url}", file=sys.stderr)
-        sys.exit(1)
 
 
 # Match any non-whitespace character as the start of the command portion so
