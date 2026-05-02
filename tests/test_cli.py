@@ -1,5 +1,6 @@
 import io
 import sys
+import tempfile
 import unittest
 from typing import Optional
 from pathlib import Path
@@ -1222,6 +1223,37 @@ class TestCheckForUpdate(unittest.TestCase):
             cli.check_for_update()
             mock_run.assert_not_called()
 
+    def test_local_checkout_decline_returns_before_running_commands(self) -> None:
+        repo_root = Path("/tmp/hey-sh")
+
+        with patch("hey.cli._find_repo_root", return_value=repo_root), \
+             patch("builtins.input", return_value="n"), \
+             patch("subprocess.run") as mock_run:
+            cli.check_for_update()
+
+        mock_run.assert_not_called()
+
+    def test_local_checkout_without_git_exits_with_manual_pull_hint(self) -> None:
+        repo_root = Path("/tmp/hey-sh")
+
+        def fake_which(name: str) -> Optional[str]:
+            if name == "git":
+                return None
+            if name == "uv":
+                return "/usr/local/bin/uv"
+            return None
+
+        with patch("hey.cli._find_repo_root", return_value=repo_root), \
+             patch("builtins.input", return_value="y"), \
+             patch("hey.cli.shutil.which", side_effect=fake_which), \
+             patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            with self.assertRaises(SystemExit) as ctx:
+                cli.check_for_update()
+
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("Could not find `git` on PATH.", stderr.getvalue())
+        self.assertIn("git -C /tmp/hey-sh pull --ff-only", stderr.getvalue())
+
     def test_local_checkout_updates_repo_and_reinstalls_when_confirmed(self) -> None:
         repo_root = Path("/tmp/hey-sh")
         which_values = {"git": "/usr/bin/git", "uv": "/usr/local/bin/uv"}
@@ -1266,6 +1298,28 @@ class TestCheckForUpdate(unittest.TestCase):
         mock_run.assert_called_once()
         self.assertIn("Using the updated checkout directly.", mock_out.getvalue())
 
+    def test_local_checkout_without_uv_prints_refresh_instructions(self) -> None:
+        repo_root = Path("/tmp/hey-sh")
+
+        def fake_which(name: str) -> Optional[str]:
+            if name == "git":
+                return "/usr/bin/git"
+            if name == "uv":
+                return None
+            return None
+
+        with patch("hey.cli._find_repo_root", return_value=repo_root), \
+             patch("builtins.input", return_value="y"), \
+             patch("hey.cli.shutil.which", side_effect=fake_which), \
+             patch("subprocess.run") as mock_run, \
+             patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+            mock_run.return_value = SimpleNamespace(returncode=0)
+            cli.check_for_update()
+
+        mock_run.assert_called_once()
+        self.assertIn("`uv` is not available on PATH.", mock_out.getvalue())
+        self.assertIn("cd /tmp/hey-sh", mock_out.getvalue())
+
 
 class TestMainUpdateFlag(unittest.TestCase):
     def test_update_flag_calls_check_for_update_and_exits(self) -> None:
@@ -1276,6 +1330,24 @@ class TestMainUpdateFlag(unittest.TestCase):
                 cli.main()
         mock_update.assert_called_once()
         self.assertEqual(ctx.exception.code, 0)
+
+
+class TestFindRepoRoot(unittest.TestCase):
+    def test_find_repo_root_returns_nearest_git_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / ".git").mkdir()
+            nested = repo_root / "pkg" / "subpkg"
+            nested.mkdir(parents=True)
+
+            self.assertEqual(cli._find_repo_root(nested), repo_root.resolve())
+
+    def test_find_repo_root_returns_none_when_git_dir_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nested = Path(tmpdir) / "pkg" / "subpkg"
+            nested.mkdir(parents=True)
+
+            self.assertIsNone(cli._find_repo_root(nested))
 
 
 if __name__ == "__main__":
