@@ -190,6 +190,12 @@ class TestLooksLikeCommand(unittest.TestCase):
 
 
 class TestCliParsing(unittest.TestCase):
+    def test_normalize_query_text_strips_leading_hey(self) -> None:
+        self.assertEqual(cli._normalize_query_text("hey git discard changes"), "git discard changes")
+        self.assertEqual(cli._normalize_query_text("Hey   git status"), "git status")
+        self.assertEqual(cli._normalize_query_text("git status"), "git status")
+        self.assertEqual(cli._normalize_query_text("hey"), "")
+
     def test_parse_response_options_with_explanations(self) -> None:
         response = (
             "1. cat /etc/arch-release\n"
@@ -635,6 +641,23 @@ class TestCliMain(unittest.TestCase):
 
         self.assertEqual(query_llm.call_args.kwargs["prompt"], "sort these words\nfoo bar baz")
         save_history.assert_called_once_with("sort these words\nfoo bar baz", "sort", "zsh")
+
+    def test_main_strips_leading_hey_from_query_before_llm(self) -> None:
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream(is_tty=False)
+
+        with patch("sys.argv", ["hey", "--no-run", "hey", "git", "discard", "changes"]), patch(
+            "sys.stdin", stdin
+        ), patch("sys.stdout", stdout), patch("sys.stderr", stderr), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", return_value="git restore ."
+        ) as query_llm, patch("hey.cli.save_history") as save_history:
+            cli.main()
+
+        self.assertEqual(query_llm.call_args.kwargs["prompt"], "git discard changes")
+        save_history.assert_called_once_with("git discard changes", "git restore .", "zsh")
 
     def test_main_history_flag_prints_history_and_exits(self) -> None:
         with patch("sys.argv", ["hey", "--history", "--history-n", "5"]), patch("hey.cli.print_history") as print_history:

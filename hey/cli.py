@@ -137,6 +137,17 @@ _PROSE_STARTERS = frozenset({
 })
 
 
+def _normalize_query_text(text: str) -> str:
+    """Strip accidental leading CLI invocation from natural-language input."""
+    trimmed = text.strip()
+    if not trimmed:
+        return trimmed
+    words = trimmed.split(maxsplit=1)
+    if words[0].lower() == "hey":
+        return words[1] if len(words) > 1 else ""
+    return trimmed
+
+
 def _looks_like_command(text: str) -> bool:
     """Return True if text resembles a shell command rather than prose.
 
@@ -416,6 +427,7 @@ def main() -> None:
             full_query = stdin_text
     else:
         full_query = " ".join(query_parts)
+    full_query = _normalize_query_text(full_query)
 
     if not full_query.strip():
         parser.print_help()
