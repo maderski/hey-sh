@@ -106,6 +106,7 @@ If a prompt is ambiguous, `hey` now prints a short numbered list of candidate co
 | `--endpoint URL` | | LLM endpoint URL (default: `http://localhost:8080/v1/chat/completions`) |
 | `--model NAME` | | Model name sent in the request payload (default: `local`) |
 | `--test` | | Test the connection to the LLM endpoint and exit |
+| `--update` | | Update `hey` from the local checkout when possible, otherwise install the latest GitHub release |
 
 ### Examples
 
@@ -178,6 +179,17 @@ hey --test
 ```
 
 `--test` respects your config file and any `--endpoint` / `--model` flags passed alongside it.
+
+### Updating hey
+
+```bash
+hey --update
+```
+
+`--update` behaves differently depending on how `hey` is running:
+
+- If `hey` is running from a git checkout, it offers to `git pull --ff-only` in that checkout. If `uv` is available, it can also refresh a global install from the same repo with `uv tool install --force .`.
+- If `hey` is running from an installed tool environment, it checks GitHub for the latest release and reinstalls from that release. It prefers `uv tool install --force git+https://github.com/maderski/hey-sh.git@<tag>` and falls back to `pip install --upgrade ...` when `uv` is unavailable.
 
 ## Run prompt behavior
 
