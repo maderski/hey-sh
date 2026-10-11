@@ -612,6 +612,22 @@ class TestCliMain(unittest.TestCase):
         self.assertEqual(cm.exception.code, 1)
         self.assertIn("usage:", stdout.getvalue())
 
+    def test_main_passes_thinking_flag_setting_from_config(self) -> None:
+        stdout = FakeStream(is_tty=False)
+        stderr = FakeStream(is_tty=False)
+        stdin = FakeStream("list files", is_tty=False)
+
+        with patch("sys.argv", ["hey"]), patch("sys.stdin", stdin), patch("sys.stdout", stdout), patch(
+            "sys.stderr", stderr
+        ), patch("hey.cli.load_config", return_value={"send_thinking_flag": False}), patch(
+            "hey.cli.detect_shell", return_value="zsh"
+        ), patch("hey.cli.detect_platform", return_value="macOS"), patch(
+            "hey.cli.query_llm", return_value="ls"
+        ) as query_llm, patch("hey.cli.save_history"):
+            cli.main()
+
+        self.assertIs(query_llm.call_args.kwargs["send_thinking_flag"], False)
+
     def test_main_uses_stdin_as_full_query(self) -> None:
         stdout = FakeStream(is_tty=False)
         stderr = FakeStream(is_tty=False)
@@ -684,7 +700,9 @@ class TestCliMain(unittest.TestCase):
         self.assertEqual(cm.exception.code, 0)
         self.assertIn("Endpoint: http://localhost:8080/v1/chat/completions", stdout.getvalue())
         self.assertIn("OK  312ms  model=llama3", stdout.getvalue())
-        ping_llm.assert_called_once_with("http://localhost:8080/v1/chat/completions", "local")
+        ping_llm.assert_called_once_with(
+            "http://localhost:8080/v1/chat/completions", "local", send_thinking_flag=True
+        )
 
     def test_main_test_flag_prints_failure_and_exits(self) -> None:
         stdout = FakeStream(is_tty=False)
