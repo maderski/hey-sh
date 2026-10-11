@@ -161,6 +161,21 @@ class TestLlm(unittest.TestCase):
 
         self.assertFalse(result["ok"])
 
+    def test_ping_llm_reports_non_string_endpoint_instead_of_raising(self) -> None:
+        # Regression: {"endpoint": 123} in config.json made the thinking-flag
+        # check raise AttributeError before ping_llm's error handling.
+        fake_httpx = SimpleNamespace(
+            Client=None,
+            ConnectError=type("ConnectError", (Exception,), {}),
+            TimeoutException=type("TimeoutException", (Exception,), {}),
+            HTTPStatusError=FakeHttpStatusError,
+        )
+
+        with patch.object(llm, "httpx", fake_httpx):
+            result = llm.ping_llm(123, "local")  # type: ignore[arg-type]
+
+        self.assertFalse(result["ok"])
+
     def test_ping_llm_reports_success(self) -> None:
         calls: list[dict] = []
 

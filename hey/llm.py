@@ -84,14 +84,16 @@ def ping_llm(endpoint: str, model: str, send_thinking_flag: bool = True) -> dict
 
     Returns a dict with keys: ok, elapsed_ms, model, error.
     """
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": "hi"}],
-        "max_tokens": 1,
-        **_no_thinking(endpoint, send_thinking_flag),
-    }
     t0 = time.monotonic()
     try:
+        # Built inside the try so a bad endpoint from config is reported as
+        # a failure rather than a traceback.
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+            **_no_thinking(endpoint, send_thinking_flag),
+        }
         with httpx.Client(timeout=10.0) as client:
             response = client.post(endpoint, json=payload)
             response.raise_for_status()
