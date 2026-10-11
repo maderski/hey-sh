@@ -163,6 +163,7 @@ Create `~/.config/hey/config.json` to set persistent defaults.
 | `host` | Base URL of your LLM server | `"http://[IP ADDRESS]:[PORT]"` |
 | `endpoint` | Full endpoint URL (overrides `host`) | `"http://[IP ADDRESS]:[PORT]/v1/chat/completions"` |
 | `model` | Model name sent in the request | `"llama3"` |
+| `send_thinking_flag` | Send llama.cpp's `chat_template_kwargs.enable_thinking: false` (default `true`; skipped automatically for `api.openai.com`). Set `false` for a strict OpenAI-compatible gateway that rejects unknown request fields | `false` |
 
 CLI flags (`--endpoint`, `--model`) always override config file values.
 

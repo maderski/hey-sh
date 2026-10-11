@@ -401,6 +401,7 @@ def main() -> None:
     config = load_config()
     default_endpoint = resolve_endpoint(config)
     default_model = config.get("model", "local")
+    send_thinking_flag = config.get("send_thinking_flag", True)
 
     parser = argparse.ArgumentParser(
         prog="hey",
@@ -480,7 +481,7 @@ def main() -> None:
 
     if args.test:
         print(f"Endpoint: {args.endpoint}")
-        result = ping_llm(args.endpoint, args.model)
+        result = ping_llm(args.endpoint, args.model, send_thinking_flag=send_thinking_flag)
         if result["ok"]:
             print(f"OK  {result['elapsed_ms']}ms  model={result['model']}")
             sys.exit(0)
@@ -526,6 +527,7 @@ def main() -> None:
             platform=os_platform,
             endpoint=args.endpoint,
             model=args.model,
+            send_thinking_flag=send_thinking_flag,
         )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -583,6 +585,7 @@ def main() -> None:
                 platform=os_platform,
                 endpoint=args.endpoint,
                 model=args.model,
+                send_thinking_flag=send_thinking_flag,
             )
         except Exception as exc:
             print(f"Error: {exc}", file=sys.stderr)

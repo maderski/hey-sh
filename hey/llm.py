@@ -1,4 +1,5 @@
 import time
+from urllib.parse import urlparse
 
 import httpx
 
@@ -24,6 +25,29 @@ EXPLAIN_SYSTEM_PROMPT = (
 )
 
 
+# A reasoning model would spend the token cap and timeout thinking. Sent
+# explicitly rather than relying on the server's default; templates without
+# the flag ignore it.
+NO_THINKING = {"enable_thinking": False}
+
+
+def _no_thinking(endpoint: str, send_thinking_flag: bool) -> dict:
+    """llama.cpp's thinking switch, unless turned off in config for a strict
+    gateway, or the endpoint is the OpenAI API: both reject unknown request
+    fields with HTTP 400."""
+    if not send_thinking_flag:
+        return {}
+    try:
+        hostname = urlparse(endpoint).hostname
+    except ValueError:
+        # A malformed endpoint fails at the request, inside the caller's
+        # error handling, rather than here.
+        hostname = None
+    if hostname == "api.openai.com":
+        return {}
+    return {"chat_template_kwargs": NO_THINKING}
+
+
 def query_llm(
     prompt: str,
     explain: bool,
@@ -31,6 +55,7 @@ def query_llm(
     platform: str,
     endpoint: str,
     model: str,
+    send_thinking_flag: bool = True,
 ) -> str:
     base = EXPLAIN_SYSTEM_PROMPT if explain else SYSTEM_PROMPT
     system = f"{base} The user's shell is {shell}. The user's OS is {platform}."
@@ -43,6 +68,7 @@ def query_llm(
         ],
         "temperature": 0.1,
         "max_tokens": 512,
+        **_no_thinking(endpoint, send_thinking_flag),
     }
 
     with httpx.Client(timeout=30.0) as client:
@@ -53,18 +79,21 @@ def query_llm(
     return data["choices"][0]["message"]["content"]
 
 
-def ping_llm(endpoint: str, model: str) -> dict:
+def ping_llm(endpoint: str, model: str, send_thinking_flag: bool = True) -> dict:
     """Send a minimal request to verify the endpoint is reachable.
 
     Returns a dict with keys: ok, elapsed_ms, model, error.
     """
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": "hi"}],
-        "max_tokens": 1,
-    }
     t0 = time.monotonic()
     try:
+        # Built inside the try so a bad endpoint from config is reported as
+        # a failure rather than a traceback.
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+            **_no_thinking(endpoint, send_thinking_flag),
+        }
         with httpx.Client(timeout=10.0) as client:
             response = client.post(endpoint, json=payload)
             response.raise_for_status()

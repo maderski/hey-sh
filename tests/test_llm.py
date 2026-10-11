@@ -89,6 +89,92 @@ class TestLlm(unittest.TestCase):
         self.assertEqual(calls[0]["json"]["model"], "local")
         self.assertEqual(calls[0]["json"]["messages"][1]["content"], "list files")
         self.assertIn("The user's shell is zsh. The user's OS is macOS.", calls[0]["json"]["messages"][0]["content"])
+        # A reasoning model would spend the 512-token cap and 30s timeout thinking.
+        self.assertEqual(calls[0]["json"]["chat_template_kwargs"], {"enable_thinking": False})
+
+    def test_query_llm_omits_llama_cpp_kwargs_for_openai(self) -> None:
+        # OpenAI rejects unknown request fields with HTTP 400.
+        calls: list[dict] = []
+
+        def fake_client(timeout: float) -> RecordingClient:
+            response = FakeResponse({"choices": [{"message": {"content": "ls"}}]})
+            return RecordingClient(response, calls, timeout)
+
+        with patch.object(llm, "httpx", SimpleNamespace(Client=fake_client)):
+            llm.query_llm(
+                prompt="list files",
+                explain=False,
+                shell="zsh",
+                platform="macOS",
+                endpoint="https://api.openai.com/v1/chat/completions",
+                model="gpt-4.1",
+            )
+
+        self.assertNotIn("chat_template_kwargs", calls[0]["json"])
+
+    def test_query_llm_can_omit_thinking_flag(self) -> None:
+        # For a strict OpenAI-compatible gateway that rejects unknown fields.
+        calls: list[dict] = []
+
+        def fake_client(timeout: float) -> RecordingClient:
+            response = FakeResponse({"choices": [{"message": {"content": "ls"}}]})
+            return RecordingClient(response, calls, timeout)
+
+        with patch.object(llm, "httpx", SimpleNamespace(Client=fake_client)):
+            llm.query_llm(
+                prompt="list files",
+                explain=False,
+                shell="zsh",
+                platform="macOS",
+                endpoint="http://gateway.local/v1/chat/completions",
+                model="local",
+                send_thinking_flag=False,
+            )
+
+        self.assertNotIn("chat_template_kwargs", calls[0]["json"])
+
+    def test_ping_llm_reports_malformed_endpoint_instead_of_raising(self) -> None:
+        # Regression: parsing the hostname for the thinking-flag check raised
+        # ValueError outside ping_llm's error handling, crashing `hey --test`.
+        class RejectingClient:
+            def __init__(self, timeout: float) -> None:
+                self.timeout = timeout
+
+            def __enter__(self) -> "RejectingClient":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+            def post(self, endpoint: str, json: dict) -> FakeResponse:
+                raise ValueError("Invalid URL")
+
+        fake_httpx = SimpleNamespace(
+            Client=RejectingClient,
+            ConnectError=type("ConnectError", (Exception,), {}),
+            TimeoutException=type("TimeoutException", (Exception,), {}),
+            HTTPStatusError=FakeHttpStatusError,
+        )
+
+        with patch.object(llm, "httpx", fake_httpx):
+            result = llm.ping_llm("http://[::1/v1/chat/completions", "local")
+
+        self.assertFalse(result["ok"])
+
+    def test_ping_llm_reports_non_string_endpoint_instead_of_raising(self) -> None:
+        # Regression: {"endpoint": 123} in config.json made the thinking-flag
+        # check raise AttributeError before ping_llm's error handling.
+        fake_httpx = SimpleNamespace(
+            Client=None,
+            ConnectError=type("ConnectError", (Exception,), {}),
+            TimeoutException=type("TimeoutException", (Exception,), {}),
+            HTTPStatusError=FakeHttpStatusError,
+        )
+
+        with patch.object(llm, "httpx", fake_httpx):
+            result = llm.ping_llm(123, "local")  # type: ignore[arg-type]
+
+        self.assertFalse(result["ok"])
 
     def test_ping_llm_reports_success(self) -> None:
         calls: list[dict] = []
@@ -111,6 +197,7 @@ class TestLlm(unittest.TestCase):
         self.assertEqual(result["elapsed_ms"], 250)
         self.assertEqual(result["model"], "llama3")
         self.assertEqual(calls[0]["timeout"], 10.0)
+        self.assertEqual(calls[0]["json"]["chat_template_kwargs"], {"enable_thinking": False})
 
     def test_ping_llm_handles_connect_error(self) -> None:
         connect_error = type("ConnectError", (Exception,), {})
