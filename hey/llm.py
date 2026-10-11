@@ -24,6 +24,12 @@ EXPLAIN_SYSTEM_PROMPT = (
 )
 
 
+# A reasoning model would spend the token cap and timeout thinking. Sent
+# explicitly rather than relying on the server's default; templates without
+# the flag ignore it.
+NO_THINKING = {"enable_thinking": False}
+
+
 def query_llm(
     prompt: str,
     explain: bool,
@@ -43,6 +49,7 @@ def query_llm(
         ],
         "temperature": 0.1,
         "max_tokens": 512,
+        "chat_template_kwargs": NO_THINKING,
     }
 
     with httpx.Client(timeout=30.0) as client:
@@ -62,6 +69,7 @@ def ping_llm(endpoint: str, model: str) -> dict:
         "model": model,
         "messages": [{"role": "user", "content": "hi"}],
         "max_tokens": 1,
+        "chat_template_kwargs": NO_THINKING,
     }
     t0 = time.monotonic()
     try:

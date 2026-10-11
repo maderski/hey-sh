@@ -89,6 +89,8 @@ class TestLlm(unittest.TestCase):
         self.assertEqual(calls[0]["json"]["model"], "local")
         self.assertEqual(calls[0]["json"]["messages"][1]["content"], "list files")
         self.assertIn("The user's shell is zsh. The user's OS is macOS.", calls[0]["json"]["messages"][0]["content"])
+        # A reasoning model would spend the 512-token cap and 30s timeout thinking.
+        self.assertEqual(calls[0]["json"]["chat_template_kwargs"], {"enable_thinking": False})
 
     def test_ping_llm_reports_success(self) -> None:
         calls: list[dict] = []
@@ -111,6 +113,7 @@ class TestLlm(unittest.TestCase):
         self.assertEqual(result["elapsed_ms"], 250)
         self.assertEqual(result["model"], "llama3")
         self.assertEqual(calls[0]["timeout"], 10.0)
+        self.assertEqual(calls[0]["json"]["chat_template_kwargs"], {"enable_thinking": False})
 
     def test_ping_llm_handles_connect_error(self) -> None:
         connect_error = type("ConnectError", (Exception,), {})
