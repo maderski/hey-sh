@@ -92,6 +92,26 @@ class TestLlm(unittest.TestCase):
         # A reasoning model would spend the 512-token cap and 30s timeout thinking.
         self.assertEqual(calls[0]["json"]["chat_template_kwargs"], {"enable_thinking": False})
 
+    def test_query_llm_omits_llama_cpp_kwargs_for_openai(self) -> None:
+        # OpenAI rejects unknown request fields with HTTP 400.
+        calls: list[dict] = []
+
+        def fake_client(timeout: float) -> RecordingClient:
+            response = FakeResponse({"choices": [{"message": {"content": "ls"}}]})
+            return RecordingClient(response, calls, timeout)
+
+        with patch.object(llm, "httpx", SimpleNamespace(Client=fake_client)):
+            llm.query_llm(
+                prompt="list files",
+                explain=False,
+                shell="zsh",
+                platform="macOS",
+                endpoint="https://api.openai.com/v1/chat/completions",
+                model="gpt-4.1",
+            )
+
+        self.assertNotIn("chat_template_kwargs", calls[0]["json"])
+
     def test_ping_llm_reports_success(self) -> None:
         calls: list[dict] = []
 

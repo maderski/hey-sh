@@ -1,4 +1,5 @@
 import time
+from urllib.parse import urlparse
 
 import httpx
 
@@ -30,6 +31,14 @@ EXPLAIN_SYSTEM_PROMPT = (
 NO_THINKING = {"enable_thinking": False}
 
 
+def _no_thinking(endpoint: str) -> dict:
+    """llama.cpp's thinking switch, except for the OpenAI API, which rejects
+    unknown request fields with HTTP 400."""
+    if urlparse(endpoint).hostname == "api.openai.com":
+        return {}
+    return {"chat_template_kwargs": NO_THINKING}
+
+
 def query_llm(
     prompt: str,
     explain: bool,
@@ -49,7 +58,7 @@ def query_llm(
         ],
         "temperature": 0.1,
         "max_tokens": 512,
-        "chat_template_kwargs": NO_THINKING,
+        **_no_thinking(endpoint),
     }
 
     with httpx.Client(timeout=30.0) as client:
@@ -69,7 +78,7 @@ def ping_llm(endpoint: str, model: str) -> dict:
         "model": model,
         "messages": [{"role": "user", "content": "hi"}],
         "max_tokens": 1,
-        "chat_template_kwargs": NO_THINKING,
+        **_no_thinking(endpoint),
     }
     t0 = time.monotonic()
     try:
